@@ -353,11 +353,11 @@ export async function exportEntity(entity: Entity): Promise<{ buffer: Buffer; fi
       [
         "التاريخ",
         "كود المعدة",
-        "العداد البداية",
         "العداد النهاية",
         "ساعات التشغيل",
         "الديزل",
-        "الإنتاجية",
+        "نوع الإنتاجية",
+        "عدد الإنتاجية",
         "الحالة",
         "ملاحظة الحالة",
         "ملاحظات",
@@ -371,11 +371,11 @@ export async function exportEntity(entity: Entity): Promise<{ buffer: Buffer; fi
       aoa.push([
         fmtDate(l.date),
         l.equipment.code,
-        l.startMeter ?? "",
         l.endMeter ?? "",
         l.operatingHours ?? "",
         l.diesel ?? "",
-        l.productivity ?? "",
+        l.productivityType ?? "",
+        l.productivityCount ?? "",
         l.condition ? CONDITION_AR[l.condition] : "",
         l.conditionNote ?? "",
         l.notes ?? "",
@@ -646,11 +646,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
   } else if (entity === "dailylogs") {
     const cCode = col(["كود المعدة", "الكود"]);
     const cDate = col(["التاريخ", "تاريخ"]);
-    const cStart = col(["العداد البداية"]);
     const cEnd = col(["العداد النهاية", "عداد الساعات", "عداد ساعات", "الساعة"]);
     const cHours = col(["ساعات التشغيل", "الساعات"]);
     const cDiesel = col(["السولار", "الديزل"]);
-    const cProd = col(["الانتاجية", "الإنتاجية"]);
+    const cProdType = col(["نوع الانتاجية", "نوع الإنتاجية", "الانتاجية", "الإنتاجية"]);
+    const cProdCount = col(["عدد الانتاجية", "عدد الإنتاجية", "كم الانتاجية"]);
     const cCond = col(["الصلاحية", "الحالة"]);
     const cCondNote = col(["ملاحظة الحالة"]);
     const cNotes = col(["ملاحظات"]);
@@ -667,11 +667,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
       secName: string;
       data: {
         date: Date;
-        startMeter: number | null;
         endMeter: number | null;
         operatingHours: number | null;
         diesel: number | null;
-        productivity: string | null;
+        productivityType: string | null;
+        productivityCount: number | null;
         condition: Condition | null;
         conditionNote: string | null;
         notes: string | null;
@@ -690,6 +690,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
       const condCell = g(r, cCond);
       const cond = conditionOf(condCell);
       const condNote = g(r, cCondNote) || (cond == null ? condCell : "");
+      const prodCell = g(r, cProdType);
+      const prodCountCell = gn(r, cProdCount);
+      const prodNumber = prodCell === "" ? null : Number(prodCell);
+      // خلية الإنتاجية القديمة: رقم يعني عدد، وغير الرقمي يعني النوع
+      const prodIsCount = prodCountCell == null && prodNumber != null && Number.isFinite(prodNumber);
       parsed.push({
         rowNo: i + 1,
         code,
@@ -697,11 +702,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
         secName: g(r, cSec),
         data: {
           date,
-          startMeter: gn(r, cStart),
           endMeter: gn(r, cEnd),
           operatingHours: gn(r, cHours),
           diesel: gn(r, cDiesel),
-          productivity: g(r, cProd) || null,
+          productivityType: prodIsCount ? null : prodCell || null,
+          productivityCount: prodCountCell ?? (prodIsCount ? prodNumber : null),
           condition: cond,
           conditionNote: condNote || null,
           notes: g(r, cNotes) || null,
@@ -728,11 +733,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
         id: true,
         date: true,
         equipmentId: true,
-        startMeter: true,
         endMeter: true,
         operatingHours: true,
         diesel: true,
-        productivity: true,
+        productivityType: true,
+        productivityCount: true,
         condition: true,
         conditionNote: true,
         notes: true,
@@ -742,11 +747,11 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
 
     const same = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
     const unchanged = (ex: (typeof existing)[number], d: DlRow["data"]) =>
-      same(ex.startMeter, d.startMeter) &&
       same(ex.endMeter, d.endMeter) &&
       same(ex.operatingHours, d.operatingHours) &&
       same(ex.diesel, d.diesel) &&
-      same(ex.productivity, d.productivity) &&
+      same(ex.productivityType, d.productivityType) &&
+      same(ex.productivityCount, d.productivityCount) &&
       same(ex.condition, d.condition) &&
       same(ex.conditionNote, d.conditionNote) &&
       same(ex.notes, d.notes);

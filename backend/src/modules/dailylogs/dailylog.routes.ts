@@ -15,6 +15,7 @@ router.use(requireAuth);
 router.get("/", validateQuery(listDailyLogQuerySchema), dailylogController.list);
 router.get("/all", validateQuery(listDailyLogQuerySchema), dailylogController.all);
 router.get("/export", validateQuery(listDailyLogQuerySchema), dailylogController.exportCsv);
+router.get("/productivity-types", dailylogController.productivityTypes);
 router.get("/:id", dailylogController.get);
 router.post("/", validate(saveDailyLogSchema), dailylogController.save);
 router.put("/:id", validate(updateDailyLogSchema), dailylogController.update);

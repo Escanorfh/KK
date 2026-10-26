@@ -43,7 +43,7 @@ const sections: { title: string; links: NavLink[] }[] = [
     title: "المراقبة",
     links: [
       { to: "/faults", label: "جدول الأعطال", icon: AlertTriangle },
-      { to: "/repair-orders", label: "طلبات الإصلاح", icon: FileCog },
+      { to: "/repair-orders", label: "أوامر الإصلاح", icon: FileCog },
       { to: "/need-requests", label: "طلبات الاحتياج", icon: PackagePlus },
       { to: "/oil-alerts", label: "تنبيهات الزيوت", icon: Droplets },
     ],

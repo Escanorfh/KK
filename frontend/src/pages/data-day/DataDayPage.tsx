@@ -14,15 +14,15 @@ interface ColFilters {
   code: string;
   name: string;
   projectId: string;
-  meterStartFrom: string;
-  meterStartTo: string;
   meterEndFrom: string;
   meterEndTo: string;
   hoursFrom: string;
   hoursTo: string;
   dieselFrom: string;
   dieselTo: string;
-  productivity: string;
+  productivityType: string;
+  productivityCountFrom: string;
+  productivityCountTo: string;
   condition: string;
   notes: string;
   user: string;
@@ -34,15 +34,15 @@ const emptyFilters: ColFilters = {
   code: "",
   name: "",
   projectId: "",
-  meterStartFrom: "",
-  meterStartTo: "",
   meterEndFrom: "",
   meterEndTo: "",
   hoursFrom: "",
   hoursTo: "",
   dieselFrom: "",
   dieselTo: "",
-  productivity: "",
+  productivityType: "",
+  productivityCountFrom: "",
+  productivityCountTo: "",
   condition: "",
   notes: "",
   user: "",
@@ -74,7 +74,7 @@ export default function DataDayPage() {
     const map: [keyof ColFilters, string][] = [
       ["code", "code"],
       ["name", "name"],
-      ["productivity", "productivity"],
+      ["productivityType", "productivityType"],
       ["notes", "notes"],
       ["user", "user"],
       ["dateFrom", "dateFrom"],
@@ -87,14 +87,14 @@ export default function DataDayPage() {
     }
     if (filters.projectId) params.projectId = filters.projectId;
     const nums: [keyof ColFilters, string][] = [
-      ["meterStartFrom", "meterStartFrom"],
-      ["meterStartTo", "meterStartTo"],
       ["meterEndFrom", "meterEndFrom"],
       ["meterEndTo", "meterEndTo"],
       ["hoursFrom", "hoursFrom"],
       ["hoursTo", "hoursTo"],
       ["dieselFrom", "dieselFrom"],
       ["dieselTo", "dieselTo"],
+      ["productivityCountFrom", "productivityCountFrom"],
+      ["productivityCountTo", "productivityCountTo"],
     ];
     for (const [key, param] of nums) {
       const v = numOrU(filters[key]);
@@ -216,11 +216,11 @@ export default function DataDayPage() {
                 <th className={thCls}>الكود</th>
                 <th className={thCls}>اسم المعدة</th>
                 <th className={thCls}>المشروع</th>
-                <th className={cn(thCls, "text-center")}>بداية</th>
                 <th className={cn(thCls, "text-center")}>نهاية</th>
                 <th className={cn(thCls, "text-center")}>ساعات</th>
                 <th className={cn(thCls, "text-center")}>ديزل</th>
-                <th className={thCls}>الإنتاجية</th>
+                <th className={thCls}>نوع الإنتاجية</th>
+                <th className={cn(thCls, "text-center")}>عدد الإنتاجية</th>
                 <th className={thCls}>الصلاحية</th>
                 <th className={thCls}>ملاحظات</th>
                 <th className={cn(thCls, "text-center")}>المستخدم</th>
@@ -277,18 +277,18 @@ export default function DataDayPage() {
                     ))}
                   </select>
                 </td>
-                <td className={tfCls}>{rangeCell("meterStartFrom", "meterStartTo")}</td>
                 <td className={tfCls}>{rangeCell("meterEndFrom", "meterEndTo")}</td>
                 <td className={tfCls}>{rangeCell("hoursFrom", "hoursTo", "any")}</td>
                 <td className={tfCls}>{rangeCell("dieselFrom", "dieselTo", "any")}</td>
                 <td className={tfCls}>
                   <input
-                    value={filters.productivity}
-                    onChange={(e) => setF("productivity", e.target.value)}
+                    value={filters.productivityType}
+                    onChange={(e) => setF("productivityType", e.target.value)}
                     placeholder="بحث..."
                     className={fInput}
                   />
                 </td>
+                <td className={tfCls}>{rangeCell("productivityCountFrom", "productivityCountTo", "any")}</td>
                 <td className={tfCls}>
                   <select
                     value={filters.condition}
@@ -362,15 +362,15 @@ export default function DataDayPage() {
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
                       {rec.equipment.project?.name || "—"}
                     </td>
-                    <td className={cn(tdCls, "text-center")}>{num(rec.startMeter)}</td>
                     <td className={cn(tdCls, "text-center")}>{num(rec.endMeter)}</td>
                     <td className={cn(tdCls, "text-center font-semibold")}>
                       {num(rec.operatingHours)}
                     </td>
                     <td className={cn(tdCls, "text-center")}>{num(rec.diesel)}</td>
                     <td className={cn(tdCls, "text-xs text-slate-500 max-w-[120px] truncate")}>
-                      {rec.productivity || "—"}
+                      {rec.productivityType || "—"}
                     </td>
+                    <td className={cn(tdCls, "text-center")}>{num(rec.productivityCount)}</td>
                     <td className={tdCls}>
                       {rec.condition ? (
                         <span

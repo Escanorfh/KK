@@ -52,11 +52,11 @@ export interface DailyLog {
   id: number;
   date: string;
   equipmentId: number;
-  startMeter?: number | null;
   endMeter?: number | null;
   operatingHours?: number | null;
   diesel?: number | null;
-  productivity?: string | null;
+  productivityType?: string | null;
+  productivityCount?: number | null;
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;

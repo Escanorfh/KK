@@ -6,7 +6,7 @@ import { cn, todayLocal, toNumberOrNull, formatDate, CONDITION_LABELS, TRACKING_
 import { getApiError, getApiFieldErrors } from "@/lib/api";
 import { isQueued } from "@/lib/offline/queue";
 import { lookupEquipment, createEquipment, getLastMeter, type LastMeter } from "@/services/equipments";
-import { saveDailyLog, listDailyLogs } from "@/services/dailylogs";
+import { saveDailyLog, listDailyLogs, productivityTypes } from "@/services/dailylogs";
 import { projectOptions } from "@/services/projects";
 import type { DailyLog, Equipment, Project, TrackingMode } from "@/types";
 
@@ -22,11 +22,11 @@ interface FormState {
   projectName: string;
   sectorName: string;
   trackingMode: TrackingMode;
-  startMeter: string;
   endMeter: string;
   operatingHours: string;
   diesel: string;
-  productivity: string;
+  productivityType: string;
+  productivityCount: string;
   condition: "GOOD" | "BROKEN" | "STOPPED" | "";
   notes: string;
 }
@@ -39,14 +39,23 @@ const emptyForm: FormState = {
   projectName: "",
   sectorName: "",
   trackingMode: "BOTH",
-  startMeter: "",
   endMeter: "",
   operatingHours: "",
   diesel: "",
-  productivity: "",
+  productivityType: "",
+  productivityCount: "",
   condition: "",
   notes: "",
 };
+
+/** اليوم السابق لتاريخ الاختيار بالتوقيت المحلي — لجلب آخر سجل متسجل قبل هذا اليوم */
+function dayBefore(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const prev = new Date(y, m - 1, d - 1);
+  return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-${String(
+    prev.getDate()
+  ).padStart(2, "0")}`;
+}
 
 export default function DayPage() {
   const location = useLocation();
@@ -67,6 +76,8 @@ export default function DayPage() {
   const [creatingEq, setCreatingEq] = useState(false);
   const [baseline, setBaseline] = useState<LastMeter | null>(null);
   const [baselineLoading, setBaselineLoading] = useState(false);
+  const [typeOptions, setTypeOptions] = useState<string[]>([]);
+  const [lastCondition, setLastCondition] = useState<{ value: NonNullable<DailyLog["condition"]>; date: string } | null>(null);
 
   const setField = (key: keyof FormState, value: string | number | null) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -132,6 +143,38 @@ export default function DayPage() {
       cancelled = true;
     };
   }, [form.equipmentId, form.trackingMode, date, form.id]);
+
+  useEffect(() => {
+    productivityTypes()
+      .then(setTypeOptions)
+      .catch(() => {});
+  }, []);
+
+  /** الصلاحية من آخر سجل سابق لنفس المعدة — تُملأ تلقائيًا عند إنشاء سجل جديد */
+  useEffect(() => {
+    if (!form.equipmentId) {
+      setLastCondition(null);
+      return;
+    }
+    let cancelled = false;
+    listDailyLogs({ equipmentId: form.equipmentId, dateTo: dayBefore(date), pageSize: 1 })
+      .then((res) => {
+        if (cancelled) return;
+        const last = res.data[0];
+        setLastCondition(last?.condition ? { value: last.condition, date: last.date.slice(0, 10) } : null);
+        if (!form.id) {
+          setForm((f) =>
+            f.equipmentId === form.equipmentId ? { ...f, condition: last?.condition ?? "" } : f
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLastCondition(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.equipmentId, form.id, date]);
 
   useEffect(() => {
     const code = form.code.trim();
@@ -234,11 +277,11 @@ export default function DayPage() {
         ...(form.id ? { id: form.id } : {}),
         date,
         equipmentId: form.equipmentId,
-        startMeter: hoursApplicable ? toNumberOrNull(form.startMeter) : null,
         endMeter: hoursApplicable ? toNumberOrNull(form.endMeter) : null,
         operatingHours: hoursApplicable ? toNumberOrNull(form.operatingHours) : null,
         diesel: toNumberOrNull(form.diesel),
-        productivity: form.productivity || null,
+        productivityType: form.productivityType || null,
+        productivityCount: toNumberOrNull(form.productivityCount),
         condition: form.condition || null,
         notes: form.notes || null,
       });
@@ -272,11 +315,11 @@ export default function DayPage() {
       projectName: rec.equipment.project?.name || "",
       sectorName: rec.equipment.sector?.name || "",
       trackingMode: rec.equipment.trackingMode,
-      startMeter: rec.startMeter != null ? String(rec.startMeter) : "",
       endMeter: rec.endMeter != null ? String(rec.endMeter) : "",
       operatingHours: rec.operatingHours != null ? String(rec.operatingHours) : "",
       diesel: rec.diesel != null ? String(rec.diesel) : "",
-      productivity: rec.productivity || "",
+      productivityType: rec.productivityType || "",
+      productivityCount: rec.productivityCount != null ? String(rec.productivityCount) : "",
       condition: rec.condition || "",
       notes: rec.notes || "",
     });
@@ -481,25 +524,18 @@ export default function DayPage() {
                 <option value="BROKEN">عاطل</option>
                 <option value="STOPPED">متوقف</option>
               </select>
+              {!form.id && lastCondition && (
+                <p className="text-[11px] text-slate-500 mt-1">
+                  مُلءة تلقائيًا من آخر سجل بتاريخ{" "}
+                  <bdi dir="ltr" className="font-mono">{lastCondition.date}</bdi>
+                </p>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {trackingModeAppliesHours(form.trackingMode) ? (
               <>
-                <div>
-                  <label className={labelCls}>بداية العداد</label>
-                  <input
-                    type="number"
-                    step="any"
-                    dir="ltr"
-                    value={form.startMeter}
-                    onChange={(e) => setField("startMeter", e.target.value)}
-                    placeholder="0"
-                    className={cn(inputCls, err("startMeter") && "border-red-400")}
-                  />
-                  {err("startMeter") && <p className="text-xs text-red-600 mt-1">{err("startMeter")}</p>}
-                </div>
                 <div>
                   <label className={labelCls}>نهاية العداد</label>
                   <input
@@ -548,7 +584,7 @@ export default function DayPage() {
                 </div>
               </>
             ) : (
-              <div className="md:col-span-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2.5 text-[13px] text-sky-800">
+              <div className="md:col-span-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2.5 text-[13px] text-sky-800">
                 هذه المعدة تتبع الكيلومترات فقط — لا تُدخل عدادات الساعات هنا. قراءات الكيلومترات
                 تُسجَّل من أوامر الصيانة.
               </div>
@@ -591,15 +627,35 @@ export default function DayPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className={labelCls}>الإنتاجية (الكمية والنوع)</label>
+              <label className={labelCls}>نوع الإنتاجية</label>
               <input
-                value={form.productivity}
-                onChange={(e) => setField("productivity", e.target.value)}
-                placeholder="مثال: 200 متر تراب"
-                className={inputCls}
+                value={form.productivityType}
+                onChange={(e) => setField("productivityType", e.target.value)}
+                list="productivity-type-options"
+                placeholder="مثال: رحلات / م3 / طن أسفلت"
+                className={cn(inputCls, err("productivityType") && "border-red-400")}
               />
+              <datalist id="productivity-type-options">
+                {typeOptions.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              {err("productivityType") && <p className="text-xs text-red-600 mt-1">{err("productivityType")}</p>}
+            </div>
+            <div>
+              <label className={labelCls}>عدد الإنتاجية</label>
+              <input
+                type="number"
+                step="any"
+                dir="ltr"
+                value={form.productivityCount}
+                onChange={(e) => setField("productivityCount", e.target.value)}
+                placeholder="0"
+                className={cn(inputCls, err("productivityCount") && "border-red-400")}
+              />
+              {err("productivityCount") && <p className="text-xs text-red-600 mt-1">{err("productivityCount")}</p>}
             </div>
             <div>
               <label className={labelCls}>ملاحظات</label>

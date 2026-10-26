@@ -13,21 +13,17 @@ const saveDailyLogBase = z.object({
   id: z.coerce.number().int().optional(),
   date: dateStr,
   equipmentId: z.coerce.number().int().positive("اختر المعدة"),
-  startMeter: optionalNum,
   endMeter: optionalNum,
   operatingHours: optionalNum,
   diesel: optionalNum,
-  productivity: optionalText,
+  productivityType: optionalText,
+  productivityCount: optionalNum,
   condition: z.enum(["GOOD", "BROKEN", "STOPPED"]).nullable().optional(),
   conditionNote: optionalText,
   notes: optionalText,
 });
 
-export const saveDailyLogSchema = saveDailyLogBase
-  .refine(
-    (d) => d.startMeter == null || d.endMeter == null || d.endMeter >= d.startMeter,
-    { message: "قراءة نهاية العداد لا يمكن أن تكون أقل من البداية", path: ["endMeter"] }
-  );
+export const saveDailyLogSchema = saveDailyLogBase;
 
 export const updateDailyLogSchema = saveDailyLogBase.omit({ id: true }).partial();
 
@@ -36,7 +32,9 @@ export const listDailyLogQuerySchema = z.object({
   code: z.string().trim().optional(),
   name: z.string().trim().optional(),
   sector: z.string().trim().optional(),
-  productivity: z.string().trim().optional(),
+  productivityType: z.string().trim().optional(),
+  productivityCountFrom: z.coerce.number().min(0).optional(),
+  productivityCountTo: z.coerce.number().min(0).optional(),
   notes: z.string().trim().optional(),
   user: z.string().trim().optional(),
   date: dateStr.optional(),
@@ -45,8 +43,6 @@ export const listDailyLogQuerySchema = z.object({
   equipmentId: z.coerce.number().int().optional(),
   projectId: z.coerce.number().int().optional(),
   condition: z.enum(["GOOD", "BROKEN", "STOPPED"]).optional(),
-  meterStartFrom: z.coerce.number().min(0).optional(),
-  meterStartTo: z.coerce.number().min(0).optional(),
   meterEndFrom: z.coerce.number().min(0).optional(),
   meterEndTo: z.coerce.number().min(0).optional(),
   hoursFrom: z.coerce.number().min(0).optional(),

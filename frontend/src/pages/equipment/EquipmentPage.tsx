@@ -1044,11 +1044,11 @@ export default function EquipmentPage() {
                       <thead>
                         <tr>
                           <th className={thCls}>التاريخ</th>
-                          <th className={cn(thCls, "text-center")}>البداية</th>
                           <th className={cn(thCls, "text-center")}>النهاية</th>
                           <th className={cn(thCls, "text-center")}>ساعات</th>
                           <th className={cn(thCls, "text-center")}>ديزل</th>
-                          <th className={cn(thCls, "text-center")}>إنتاجية</th>
+                          <th className={cn(thCls, "text-center")}>نوع الإنتاجية</th>
+                          <th className={cn(thCls, "text-center")}>عدد الإنتاجية</th>
                           <th className={cn(thCls, "text-center")}>الصلاحية</th>
                           <th className={thCls}>ملاحظات</th>
                         </tr>
@@ -1059,13 +1059,13 @@ export default function EquipmentPage() {
                             <td className={cn(tdCls, "font-mono text-xs")} dir="ltr">
                               {day(l.date)}
                             </td>
-                            <td className={cn(tdCls, "text-center font-mono text-xs")}>{num(l.startMeter)}</td>
                             <td className={cn(tdCls, "text-center font-mono text-xs")}>{num(l.endMeter)}</td>
                             <td className={cn(tdCls, "text-center font-mono text-xs")}>
                               {num(l.operatingHours)}
                             </td>
                             <td className={cn(tdCls, "text-center font-mono text-xs")}>{num(l.diesel)}</td>
-                            <td className={cn(tdCls, "text-center")}>{l.productivity || "—"}</td>
+                            <td className={cn(tdCls, "text-center text-xs")}>{l.productivityType || "—"}</td>
+                            <td className={cn(tdCls, "text-center font-mono text-xs")}>{num(l.productivityCount)}</td>
                             <td className={cn(tdCls, "text-center")}>
                               {l.condition ? (
                                 <span className="text-[11px] font-bold rounded-full px-2 py-0.5 bg-slate-100 text-slate-600">
@@ -1266,7 +1266,7 @@ export default function EquipmentPage() {
           <table className="w-full border-collapse mb-3 text-[10px]">
             <thead>
               <tr>
-                {["التاريخ", "البداية", "النهاية", "ساعات", "ديزل", "إنتاجية", "الصلاحية", "ملاحظات"].map((h) => (
+                {["التاريخ", "النهاية", "ساعات", "ديزل", "نوع الإنتاجية", "عدد الإنتاجية", "الصلاحية", "ملاحظات"].map((h) => (
                   <th key={h} className="border border-slate-400 px-1.5 py-1 bg-slate-100 text-right font-bold">
                     {h}
                   </th>
@@ -1277,11 +1277,11 @@ export default function EquipmentPage() {
               {detail.daily.data.slice(0, 12).map((l) => (
                 <tr key={l.id}>
                   <td className="border border-slate-400 px-1.5 py-1 text-center">{day(l.date)}</td>
-                  <td className="border border-slate-400 px-1.5 py-1 text-center">{num(l.startMeter)}</td>
                   <td className="border border-slate-400 px-1.5 py-1 text-center">{num(l.endMeter)}</td>
                   <td className="border border-slate-400 px-1.5 py-1 text-center">{num(l.operatingHours)}</td>
                   <td className="border border-slate-400 px-1.5 py-1 text-center">{num(l.diesel)}</td>
-                  <td className="border border-slate-400 px-1.5 py-1 text-center">{l.productivity || "—"}</td>
+                  <td className="border border-slate-400 px-1.5 py-1 text-center">{l.productivityType || "—"}</td>
+                  <td className="border border-slate-400 px-1.5 py-1 text-center">{num(l.productivityCount)}</td>
                   <td className="border border-slate-400 px-1.5 py-1 text-center">
                     {l.condition ? CONDITION_LABELS[l.condition] : "—"}
                   </td>

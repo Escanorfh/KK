@@ -6,11 +6,11 @@ export interface DailyLogPayload {
   id?: number;
   date: string;
   equipmentId: number;
-  startMeter?: number | null;
   endMeter?: number | null;
   operatingHours?: number | null;
   diesel?: number | null;
-  productivity?: string | null;
+  productivityType?: string | null;
+  productivityCount?: number | null;
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;
@@ -39,6 +39,11 @@ export async function listDailyLogs(params: Record<string, unknown> = {}) {
   return data;
 }
 
+/** أنواع الإنتاجية المستخدمة سابقًا — كاقتراحات في خانة النوع */
+export async function productivityTypes() {
+  const { data } = await api.get<string[]>("/dailylogs/productivity-types");
+  return data;
+}
 export async function listAllDailyLogs(params: Record<string, unknown> = {}) {
   const { data } = await api.get<{ data: DailyLog[]; total: number }>("/dailylogs/all", {
     params,

@@ -19,6 +19,14 @@ export async function update(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function productivityTypes(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await dailylogService.productivityTypes(req.scope));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const query = (req as Request & {

@@ -272,22 +272,26 @@ model NeedRequestItem {
 }
 
 model DailyLog {
-  id             Int        @id @default(autoincrement())
-  date           DateTime   @db.Date
-  equipmentId    Int
-  equipment      Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  startMeter     Float?
-  endMeter       Float?
-  operatingHours Float?
-  diesel         Float?
-  productivity   String?
-  condition      Condition?
-  conditionNote  String?
-  notes          String?
-  userId         Int?
-  user           User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  id                Int        @id @default(autoincrement())
+  date              DateTime   @db.Date
+  equipmentId       Int
+  equipment         Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  /// Legacy: نهاية العداد كانت تُسجَّل معها قراءة بداية — لم تعد تُدخل ولا تُعرض، والعمود باقٍ لبيانات ما قبل التعديل.
+  startMeter        Float?
+  endMeter          Float?
+  operatingHours    Float?
+  diesel            Float?
+  /// Legacy: كانت الإنتاجية نصًا حرًا (كمية + نوع في خلية واحدة)؛ استُبدلت بالنوع والعدد.
+  productivity      String?
+  productivityType  String?
+  productivityCount Float?
+  condition         Condition?
+  conditionNote     String?
+  notes             String?
+  userId            Int?
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
   @@unique([date, equipmentId])
 }

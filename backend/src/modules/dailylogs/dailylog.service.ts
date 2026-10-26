@@ -25,11 +25,11 @@ interface SaveInput {
   id?: number;
   date: string;
   equipmentId: number;
-  startMeter?: number | null;
   endMeter?: number | null;
   operatingHours?: number | null;
   diesel?: number | null;
-  productivity?: string | null;
+  productivityType?: string | null;
+  productivityCount?: number | null;
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;
@@ -38,11 +38,11 @@ interface SaveInput {
 const dataFields = (input: SaveInput) => ({
   date: toDate(input.date),
   equipmentId: input.equipmentId,
-  startMeter: input.startMeter ?? null,
   endMeter: input.endMeter ?? null,
   operatingHours: input.operatingHours ?? null,
   diesel: input.diesel ?? null,
-  productivity: input.productivity ?? null,
+  productivityType: input.productivityType ?? null,
+  productivityCount: input.productivityCount ?? null,
   condition: input.condition ?? null,
   conditionNote: input.conditionNote ?? null,
   notes: input.notes ?? null,
@@ -58,11 +58,11 @@ async function ensureEquipment(equipmentId: number) {
 
 function assertHoursAllowed(
   equipment: { trackingMode: "HOURS" | "KM" | "BOTH" },
-  input: Pick<SaveInput, "startMeter" | "endMeter" | "operatingHours">
+  input: Pick<SaveInput, "endMeter" | "operatingHours">
 ) {
   if (
     equipment.trackingMode === "KM" &&
-    (input.startMeter != null || input.endMeter != null || input.operatingHours != null)
+    (input.endMeter != null || input.operatingHours != null)
   ) {
     throw Object.assign(
       new Error("وضع تتبع هذه المعدة بالكيلومترات فقط — لا يمكن تسجيل عدادات الساعات"),
@@ -150,11 +150,11 @@ export async function update(id: number, input: Partial<SaveInput>, userId: numb
     data: {
       date,
       equipmentId,
-      startMeter: merge(input.startMeter, existing.startMeter),
       endMeter: merge(input.endMeter, existing.endMeter),
       operatingHours: merge(input.operatingHours, existing.operatingHours),
       diesel: merge(input.diesel, existing.diesel),
-      productivity: merge(input.productivity, existing.productivity),
+      productivityType: merge(input.productivityType, existing.productivityType),
+      productivityCount: merge(input.productivityCount, existing.productivityCount),
       condition: merge(input.condition, existing.condition),
       conditionNote: merge(input.conditionNote, existing.conditionNote),
       notes: merge(input.notes, existing.notes),
@@ -170,7 +170,9 @@ interface ListParams {
   code?: string;
   name?: string;
   sector?: string;
-  productivity?: string;
+  productivityType?: string;
+  productivityCountFrom?: number;
+  productivityCountTo?: number;
   notes?: string;
   user?: string;
   date?: string;
@@ -179,8 +181,6 @@ interface ListParams {
   equipmentId?: number;
   projectId?: number;
   condition?: "GOOD" | "BROKEN" | "STOPPED";
-  meterStartFrom?: number;
-  meterStartTo?: number;
   meterEndFrom?: number;
   meterEndTo?: number;
   hoursFrom?: number;
@@ -197,7 +197,9 @@ function buildWhere({
   code,
   name,
   sector,
-  productivity,
+  productivityType,
+  productivityCountFrom,
+  productivityCountTo,
   notes,
   user,
   date,
@@ -206,8 +208,6 @@ function buildWhere({
   equipmentId,
   projectId,
   condition,
-  meterStartFrom,
-  meterStartTo,
   meterEndFrom,
   meterEndTo,
   hoursFrom,
@@ -234,17 +234,17 @@ function buildWhere({
   if (name) and.push({ equipment: { name: { contains: name, mode: "insensitive" } } });
   if (sector) and.push({ equipment: { sector: { name: { contains: sector, mode: "insensitive" } } } });
   if (user) and.push({ user: { name: { contains: user, mode: "insensitive" } } });
-  if (productivity)
-    and.push({ productivity: { contains: productivity, mode: "insensitive" } });
-  if (notes) and.push({ notes: { contains: notes, mode: "insensitive" } });
-  if (meterStartFrom != null || meterStartTo != null) {
+  if (productivityType)
+    and.push({ productivityType: { contains: productivityType, mode: "insensitive" } });
+  if (productivityCountFrom != null || productivityCountTo != null) {
     and.push({
-      startMeter: {
-        ...(meterStartFrom != null ? { gte: meterStartFrom } : {}),
-        ...(meterStartTo != null ? { lte: meterStartTo } : {}),
+      productivityCount: {
+        ...(productivityCountFrom != null ? { gte: productivityCountFrom } : {}),
+        ...(productivityCountTo != null ? { lte: productivityCountTo } : {}),
       },
     });
   }
+  if (notes) and.push({ notes: { contains: notes, mode: "insensitive" } });
   if (meterEndFrom != null || meterEndTo != null) {
     and.push({
       endMeter: {
@@ -319,6 +319,18 @@ export async function listAll(params: Omit<ListParams, "page" | "pageSize">) {
   return { data, total };
 }
 
+/** أنواع الإنتاجية الأكثر استخدامًا — تُعرض كاقتراحات في خانة النوع */
+export async function productivityTypes(scope?: number[] | null) {
+  const grouped = await prisma.dailyLog.groupBy({
+    by: ["productivityType"],
+    where: { ...buildWhere({ scope }), NOT: [{ productivityType: null }, { productivityType: "" }] },
+    _count: { productivityType: true },
+    orderBy: { _count: { productivityType: "desc" } },
+    take: 15,
+  });
+  return grouped.map((g) => g.productivityType).filter((v): v is string => v !== null);
+}
+
 const CSV_HEADERS = [
   "رقم السجل",
   "التاريخ",
@@ -326,11 +338,11 @@ const CSV_HEADERS = [
   "اسم المعدة",
   "المشروع",
   "القطاع",
-  "بداية العداد",
   "نهاية العداد",
   "ساعات التشغيل",
   "الديزل",
-  "الإنتاجية",
+  "نوع الإنتاجية",
+  "عدد الإنتاجية",
   "الصلاحية",
   "تفصيل الصلاحية",
   "ملاحظات",
@@ -367,11 +379,11 @@ export async function exportRows(params: Omit<ListParams, "page" | "pageSize">) 
         r.equipment.name,
         r.equipment.project?.name ?? "",
         r.equipment.sector?.name ?? "",
-        r.startMeter ?? "",
         r.endMeter ?? "",
         r.operatingHours ?? "",
         r.diesel ?? "",
-        r.productivity ?? "",
+        r.productivityType ?? "",
+        r.productivityCount ?? "",
         r.condition ? CONDITION_AR[r.condition] : "",
         r.conditionNote ?? "",
         r.notes ?? "",
