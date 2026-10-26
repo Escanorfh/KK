@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-50 text-gray-900;
+}
+
+@page need-page {
+  size: A4 landscape;
+  margin: 6mm;
+}
+
+.print-need {
+  page: need-page;
+}
+
+@page alerts-page {
+  size: A4 landscape;
+  margin: 6mm;
+}
+
+.print-alerts {
+  page: alerts-page;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 8mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+}

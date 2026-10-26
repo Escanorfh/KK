@@ -1,0 +1,390 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ROOT
+  ADMIN
+  MANAGER
+  USER
+}
+
+enum WorkType {
+  MAINTENANCE
+  REPAIR
+}
+
+enum WorkStatus {
+  NEW
+  IN_PROGRESS
+  DONE
+  WAITING_PARTS
+}
+
+enum RepairOrderStatus {
+  PENDING
+  RECEIVED
+  IN_REPAIR
+  REPAIRED
+  LOADED
+  RETURNED
+}
+
+enum Condition {
+  GOOD
+  BROKEN
+  STOPPED
+}
+
+enum TrackingMode {
+  HOURS
+  KM
+  BOTH
+}
+
+enum NeedRequestStatus {
+  DRAFT
+  SENT
+  FAILED
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(USER)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dailyLogs           DailyLog[]
+  maintenance         Maintenance[]
+  auditLogs           AuditLog[]
+  repairOrdersCreated RepairOrder[]
+  repairOrderEvents   RepairOrderEvent[]
+  needRequestsCreated NeedRequest[]
+  projects            UserProject[]
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  code        String?  @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sectors      Sector[]
+  equipment    Equipment[]
+  faults       Fault[]
+  repairOrders RepairOrder[]
+  needRequests NeedRequest[]
+  users        UserProject[]
+}
+
+model UserProject {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId Int
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, projectId])
+}
+
+model Sector {
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+
+  equipment    Equipment[]
+  faults       Fault[]
+  repairOrders RepairOrder[]
+
+  @@unique([projectId, name])
+}
+
+model EquipmentCategory {
+  id                  Int          @id @default(autoincrement())
+  name                String       @unique
+  codePrefixes        String[]     @default([])
+  defaultTrackingMode TrackingMode @default(BOTH)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  equipment Equipment[]
+}
+
+model Equipment {
+  id                     Int                @id @default(autoincrement())
+  code                   String             @unique
+  name                   String
+  projectId              Int?
+  sectorId               Int?
+  categoryId             Int?
+  trackingMode           TrackingMode       @default(BOTH)
+  trackingModeOverridden Boolean            @default(false)
+  trackingModeConfirmed  Boolean            @default(false)
+  /// Legacy field kept only for the tracking-mode migration; do not use in new logic.
+  hasOdometer            Boolean            @default(true)
+  project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  category               EquipmentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  dailyLogs     DailyLog[]
+  maintenance   Maintenance[]
+  oilSchedules  OilSchedule[]
+  partSchedules PartSchedule[]
+  meterResets   MeterReset[]
+  faults        Fault[]
+  repairOrders  RepairOrder[]
+}
+
+model MeterReset {
+  id          Int       @id @default(autoincrement())
+  equipmentId Int
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  date        DateTime  @db.Date
+  hours       Float?
+  km          Float?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([equipmentId, date])
+}
+
+model RepairOrder {
+  id                     Int                @id @default(autoincrement())
+  requestNo              Int                @unique
+  type                   String             @default("INTERNAL")
+  projectId              Int?
+  project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId               Int?
+  sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  equipmentId            Int
+  equipment              Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  entryDate              DateTime?          @db.Date
+  exitDate               DateTime?          @db.Date
+  hours                  Float?
+  km                     Float?
+  workshop               String?
+  faultDescription       String
+  actionTaken            String?
+  itemName               String?
+  partModel              String?
+  itemCode               String?
+  technicalCode          String?
+  quantity               Int                @default(1)
+  unit                   String             @default("عدد")
+  itemCondition          String             @default("عاطلة")
+  siteName               String?
+  requesterName          String?
+  sourceWarehouseId      Int?
+  destinationWarehouseId Int?
+  technicianPhone        String?
+  imageUrl               String?
+  imageBase64            String?            @db.Text
+  estimatedCost          Float?
+  actualCost             Float?
+  notes                  String?            @db.Text
+  status                 RepairOrderStatus  @default(PENDING)
+  sentAt                 DateTime?
+  sendError              String?
+  managersRef            String?
+  managersId             Int?               @unique
+  managersStatus         String?
+  managersSyncedAt       DateTime?
+  parts                  RepairPart[]
+  events                 RepairOrderEvent[]
+  createdById            Int?
+  createdBy              User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+}
+
+model RepairPart {
+  id            Int         @id @default(autoincrement())
+  repairOrderId Int
+  repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  qty           Float?
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model RepairOrderEvent {
+  id            Int               @id @default(autoincrement())
+  repairOrderId Int
+  repairOrder   RepairOrder       @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  status        RepairOrderStatus
+  userId        Int?
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  note          String?
+  createdAt     DateTime          @default(now())
+}
+
+model NeedRequest {
+  id               Int               @id @default(autoincrement())
+  requestNo        Int               @unique
+  projectId        Int?
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  department       String
+  requestDate      DateTime          @db.Date
+  status           NeedRequestStatus @default(DRAFT)
+  sentAt           DateTime?
+  sendError        String?
+  managersRef      String?
+  managersId       Int?              @unique
+  managersStatus   String?
+  managersSyncedAt DateTime?
+  items            NeedRequestItem[]
+  createdById      Int?
+  createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model NeedRequestItem {
+  id             Int         @id @default(autoincrement())
+  needRequestId  Int
+  needRequest    NeedRequest @relation(fields: [needRequestId], references: [id], onDelete: Cascade)
+  rowNo          Int
+  itemName       String
+  itemCode       String?
+  unit           String?
+  qty            Float
+  equipmentRef   String?
+  currentBalance Float?
+  localSupply    Float?
+  foreignSupply  Float?
+  notes          String?
+  createdAt      DateTime    @default(now())
+}
+
+model DailyLog {
+  id             Int        @id @default(autoincrement())
+  date           DateTime   @db.Date
+  equipmentId    Int
+  equipment      Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  startMeter     Float?
+  endMeter       Float?
+  operatingHours Float?
+  diesel         Float?
+  productivity   String?
+  condition      Condition?
+  conditionNote  String?
+  notes          String?
+  userId         Int?
+  user           User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([date, equipmentId])
+}
+
+model Maintenance {
+  id              Int        @id @default(autoincrement())
+  workOrderNo     Int?
+  date            DateTime   @db.Date
+  endDate         DateTime?  @db.Date
+  equipmentId     Int
+  equipment       Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  workType        WorkType
+  orderType       String?
+  maintenanceType String?
+  workshop        String?
+  description     String?
+  action          String?
+  parts           String?
+  meterReading    Float?
+  kmMeter         Float?
+  downtime        Float?
+  status          WorkStatus @default(NEW)
+  notes           String?
+  userId          Int?
+  user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workParts       WorkPart[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model WorkPart {
+  id            Int         @id @default(autoincrement())
+  maintenanceId Int
+  maintenance   Maintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  qty           Float?
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model OilSchedule {
+  id                 Int       @id @default(autoincrement())
+  equipmentId        Int
+  equipment          Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  oilType            String
+  lastChangeMeter    Float
+  intervalHours      Float
+  warningBeforeHours Float     @default(10)
+  nextDueMeter       Float
+  lastServiceId      Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([equipmentId, oilType])
+}
+
+model PartSchedule {
+  id          Int       @id @default(autoincrement())
+  equipmentId Int
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  partName    String
+  interval    Float
+  unit        String    @default("ساعة")
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([equipmentId, partName])
+}
+
+model Fault {
+  id            Int        @id @default(autoincrement())
+  date          DateTime   @db.Date
+  projectId     Int?
+  project       Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId      Int?
+  sector        Sector?    @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  equipmentId   Int
+  equipment     Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  description   String
+  cause         String?
+  faultType     String?
+  downtimeHours Float?
+  actionTaken   String?
+  status        WorkStatus @default(NEW)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  entity    String
+  recordId  Int
+  action    String
+  details   Json?
+  createdAt DateTime @default(now())
+}

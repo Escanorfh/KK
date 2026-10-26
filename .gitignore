@@ -1,0 +1,33 @@
+# التبعيات ومخرجات البناء
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# حزم سطح المكتب (ملفات تركيب كبيرة)
+frontend/desktop-release/
+frontend/installer/
+frontend/releases/
+*.exe
+*.blockmap
+
+# كاش Vite
+.vite-temp/
+.vite/
+
+# الأسرار والإعدادات المحلية — لا تُرفع أبدًا
+.env
+.env.local
+.env.*.local
+
+# بيانات تشغيلية حقيقية (سجل المعدات)
+ALADABIA.xlsm
+*.xlsm
+*.xlsx
+*.xls
+
+# سجلات وملفات النظام
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store

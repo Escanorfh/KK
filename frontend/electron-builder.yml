@@ -1,0 +1,30 @@
+appId: com.qasidkhair.efms
+productName: EFMS
+copyright: قاصد خير — نظام متابعة المعدات والصيانة
+directories:
+  output: desktop-release
+  buildResources: build
+files:
+  - dist/**
+  - electron/**
+  - package.json
+asar: true
+compression: normal
+npmRebuild: false
+forceCodeSigning: false
+win:
+  icon: build/icon.ico
+  # بدون شهادة توقيع: لا حاجة لأدوات winCodeSign (تفشل على ويندوز بدون صلاحيات رموز مرتبطة)
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: EFMS
+  artifactName: EFMS-Setup-${version}.${ext}
