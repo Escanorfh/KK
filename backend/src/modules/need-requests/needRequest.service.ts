@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { scopeOr } from "../../utils/scope";
 import type { NeedRequestStatus } from "@prisma/client";
 import {
   ManagersApiError,
@@ -127,8 +128,10 @@ export async function list(params: {
   projectId?: number;
   page: number;
   pageSize: number;
+  scope?: number[] | null;
 }) {
   const digits = params.q && /^\d+$/.test(params.q) ? Number(params.q) : null;
+  const own = scopeOr(params.scope);
   const where = {
     ...(params.status ? { status: params.status } : {}),
     ...(params.projectId ? { projectId: params.projectId } : {}),
@@ -142,6 +145,7 @@ export async function list(params: {
           ],
         }
       : {}),
+    ...(own ? { AND: [{ OR: own }] } : {}),
   };
 
   const [total, data] = await Promise.all([

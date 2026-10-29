@@ -23,6 +23,8 @@ export interface DashboardSummary {
   }[];
   faultsByStatus: { status: string; count: number }[];
   equipmentByProject: { name: string; count: number }[];
+  /** تاريخ آخر يوم في السجل اليومي — توزيع المعدات على المشاريع محسوب منه */
+  lastEquipmentLogDate?: string | null;
   conditions: { GOOD: number; BROKEN: number; STOPPED: number };
   topEquipment: { code: string; name: string; project: string | null; hours: number; diesel: number }[];
   recentFaults: {

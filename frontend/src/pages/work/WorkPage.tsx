@@ -9,6 +9,7 @@ import {
   Pencil,
   Trash2,
   Wrench,
+  FolderKanban,
   AlertTriangle,
 } from "lucide-react";
 import {
@@ -45,7 +46,8 @@ import {
   getPartAlerts,
   type EquipmentAlert,
 } from "@/services/partSchedules";
-import type { Maintenance, TrackingMode } from "@/types";
+import { projectOptions } from "@/services/projects";
+import type { Maintenance, Project, TrackingMode } from "@/types";
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500";
@@ -167,6 +169,14 @@ export default function WorkPage() {
   const [schedSavingId, setSchedSavingId] = useState<number | null>(null);
   const [meterLoading, setMeterLoading] = useState(false);
   const [equipAlert, setEquipAlert] = useState<EquipmentAlert | null>(null);
+  const [projects, setProjects] = useState<Pick<Project, "id" | "name">[]>([]);
+  const [projectFilter, setProjectFilter] = useState("");
+
+  useEffect(() => {
+    projectOptions()
+      .then(setProjects)
+      .catch(() => {});
+  }, []);
 
   const reloadSchedules = useCallback(async (equipmentId: number) => {
     setSchedLoading(true);
@@ -224,14 +234,18 @@ export default function WorkPage() {
   const loadRecords = useCallback(async () => {
     setRecordsLoading(true);
     try {
-      const res = await listMaintenance({ date, pageSize: 100 });
+      const res = await listMaintenance({
+        date,
+        pageSize: 100,
+        ...(projectFilter ? { projectId: Number(projectFilter) } : {}),
+      });
       setRecords(res.data);
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
       setRecordsLoading(false);
     }
-  }, [date]);
+  }, [date, projectFilter]);
 
   useEffect(() => {
     loadRecords();
@@ -556,6 +570,25 @@ export default function WorkPage() {
           <p className="text-xs text-slate-500 mt-0.5">نموذج أمر الشغل + قطع الغيار</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+            <FolderKanban size={14} className="text-slate-400" />
+            <label className="text-xs text-slate-500" htmlFor="work-project-filter">
+              المشروع
+            </label>
+            <select
+              id="work-project-filter"
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="text-xs bg-transparent focus:outline-none max-w-[170px]"
+            >
+              <option value="">كل المشاريع</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
             <Wrench size={14} className="text-slate-400" />
             <span className="text-xs text-slate-500">تاريخ الدخول</span>

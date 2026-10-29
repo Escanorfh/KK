@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { scopeOr } from "../../utils/scope";
 
 const include = {
   equipment: {
@@ -147,8 +148,9 @@ function buildWhere({
       ],
     });
   }
-  if (scope) {
-    and.push({ OR: [{ projectId: { in: scope } }, { equipment: { projectId: { in: scope } } }] });
+  const own = scopeOr(scope);
+  if (own) {
+    and.push({ OR: [...own, { equipment: { OR: own } }] });
   }
 
   return and.length ? { AND: and } : {};
@@ -193,7 +195,8 @@ export async function report(params: {
 }) {
   const and: Prisma.DailyLogWhereInput[] = [];
   if (params.projectId) and.push({ equipment: { projectId: params.projectId } });
-  if (params.scope) and.push({ equipment: { projectId: { in: params.scope } } });
+  const own = scopeOr(params.scope);
+  if (own) and.push({ equipment: { OR: own } });
   const scopeWhere = and.length ? { AND: and } : {};
 
   let dateStr = params.date;

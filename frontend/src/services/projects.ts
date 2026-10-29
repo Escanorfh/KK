@@ -18,7 +18,7 @@ export async function projectOptions() {
 }
 
 export async function listProjects(params: Record<string, unknown> = {}) {
-  const { data } = await api.get<Paginated<Project>>("/projects", { params });
+  const { data } = await api.get<Paginated<Project> & { lastLogDate?: string | null }>("/projects", { params });
   return data;
 }
 
@@ -34,6 +34,14 @@ export async function updateProject(id: number, payload: Partial<ProjectPayload>
 
 export async function deleteProject(id: number) {
   const { data } = await api.delete<{ message: string }>(`/projects/${id}`);
+  return data;
+}
+
+/** مزامنة فورية لقائمة المشاريع من نظام المدرين (/requisitions/projects) — متاحة لـ ROOT فقط */
+export async function syncProjectsFromManagers() {
+  const { data } = await api.post<{ fetched: number; created: number; updated: number; unchanged: number }>(
+    "/data/sync-projects"
+  );
   return data;
 }
 

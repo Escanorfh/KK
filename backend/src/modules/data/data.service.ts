@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
 import type { WorkStatus, WorkType, Condition } from "@prisma/client";
 import prisma from "../../config/prisma";
+import { managersProjects, normalizeArabic } from "../../utils/managers";
+import { withDbRetry } from "../../utils/db";
 
 function fail(message: string, status: number): never {
   throw Object.assign(new Error(message), { status });
@@ -447,13 +449,20 @@ export async function exportEntity(entity: Entity): Promise<{ buffer: Buffer; fi
   return { buffer, filename: `${entity}-${today}.xlsx` };
 }
 
-export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: string): Promise<ImportResult> {
+export async function importEntity(
+  entity: Entity,
+  buffer: Buffer,
+  sheetName?: string,
+  fileName?: string
+): Promise<ImportResult> {
   const sheets = sheetsFromBuffer(buffer);
   const chosen = pickSheet(entity, sheets, sheetName);
   const allRows = chosen.rows;
   const { headers, col, dataStart } = locateLayout(allRows, entity);
   const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
   const eqCache = new Map<string, number>();
+  // معرّفات السجلات اللي الاستيراد ده أنشأها — تُحفظ في سجل الاستيراد لحذفها لاحقًا
+  const createdIds: number[] = [];
   const MAX_ERRORS = 50;
 
   console.log(
@@ -534,7 +543,8 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
           });
           result.updated++;
         } else {
-          await prisma.project.create({ data: { code, name, description: g(r, cDesc) || null } });
+          const made = await prisma.project.create({ data: { code, name, description: g(r, cDesc) || null } });
+          createdIds.push(made.id);
           result.created++;
         }
       } catch {
@@ -617,6 +627,14 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
         skipDuplicates: true,
       });
       result.created += c.length;
+    }
+    if (toCreate.length > 0) {
+      // createMany لا يُرجع المعرّفات — نجلبها بعد الإنشاء لتتبّع سجل الاستيراد
+      const made = await prisma.equipment.findMany({
+        where: { code: { in: toCreate.map((p) => p.code) } },
+        select: { id: true },
+      });
+      createdIds.push(...made.map((m) => m.id));
     }
 
     const toUpdate = [...byCode.values()].filter((p) => existed.has(p.code));
@@ -771,6 +789,15 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
         skipDuplicates: true,
       });
       result.created += res.count;
+    }
+    if (creates.length > 0) {
+      // createMany لا يُرجع المعرّفات — نعيد جلب السجلات بالمفتاح (التاريخ + المعدة) لتتبّع الاستيراد
+      const newKeys = new Set(creates.map((p) => dayKey(p.data.date, eqCache.get(p.code)!)));
+      const made = await prisma.dailyLog.findMany({
+        where: { equipmentId: { in: eqIds }, date: { in: dates } },
+        select: { id: true, date: true, equipmentId: true },
+      });
+      createdIds.push(...made.filter((m) => newKeys.has(dayKey(m.date, m.equipmentId))).map((m) => m.id));
     }
     for (const c of chunk(updates, 100)) {
       await prisma.$transaction(
@@ -991,9 +1018,10 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
           }
           result.updated++;
         } else {
-          await prisma.maintenance.create({
+          const made = await prisma.maintenance.create({
             data: { ...data, workParts: { create: order.parts } },
           });
+          createdIds.push(made.id);
           result.created++;
         }
       } catch {
@@ -1061,7 +1089,8 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
           await prisma.partSchedule.update({ where: { id: exId }, data });
           result.updated++;
         } else {
-          await prisma.partSchedule.create({ data: { equipmentId, partName: p.partName, ...data } });
+          const made = await prisma.partSchedule.create({ data: { equipmentId, partName: p.partName, ...data } });
+          createdIds.push(made.id);
           result.created++;
         }
       } catch {
@@ -1076,6 +1105,18 @@ export async function importEntity(entity: Entity, buffer: Buffer, sheetName?: s
   }
 
   await applyEqMeta();
+  // تسجيل الاستيراد ليظهر في «سجل الشيتات» ويتمكّن المستخدم من حذف بيانات هذا الشيت لاحقًا
+  await prisma.importLog.create({
+    data: {
+      entity,
+      fileName: fileName || "—",
+      sheetName: chosen.name,
+      created: result.created,
+      updated: result.updated,
+      skipped: result.skipped,
+      createdIds,
+    },
+  });
   return result;
 }
 
@@ -1090,11 +1131,13 @@ const CLEARABLE: Record<Exclude<Entity, "users">, () => Promise<number>> = {
 export async function clearEntity(entity: Entity) {
   if (entity === "users") fail("لا يمكن مسح جدول المستخدمين", 400);
   const count = await CLEARABLE[entity]();
+  // سجلات الاستيراد الخاصة بهذا الجدول باتت بلا معنى بعد المسح الكامل
+  await prisma.importLog.deleteMany({ where: { entity } });
   return { message: "تم مسح البيانات", deleted: count };
 }
 
 export async function clearAll() {
-  const [workParts, maintenance, dailyLogs, partSchedules, oilSchedules, faults, auditLogs, sectors, equipment, projects] =
+  const [workParts, maintenance, dailyLogs, partSchedules, oilSchedules, faults, auditLogs, sectors, equipment, projects, importLogs] =
     await prisma.$transaction([
       prisma.workPart.deleteMany(),
       prisma.maintenance.deleteMany(),
@@ -1106,6 +1149,7 @@ export async function clearAll() {
       prisma.sector.deleteMany(),
       prisma.equipment.deleteMany(),
       prisma.project.deleteMany(),
+      prisma.importLog.deleteMany(),
     ]);
   void workParts;
   void maintenance;
@@ -1117,6 +1161,7 @@ export async function clearAll() {
   void sectors;
   void equipment;
   void projects;
+  void importLogs;
   return {
     message: "تم مسح كل البيانات وإبقاء المستخدمين",
     deleted: {
@@ -1131,6 +1176,191 @@ export async function clearAll() {
       equipment: equipment.count,
       projects: projects.count,
     },
+  };
+}
+
+export interface ImportLogRow {
+  id: number;
+  entity: Entity;
+  fileName: string;
+  sheetName: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  createdAt: Date;
+}
+
+export async function listImports(): Promise<ImportLogRow[]> {
+  const rows = await prisma.importLog.findMany({
+    orderBy: { id: "desc" },
+    take: 200,
+    select: {
+      id: true,
+      entity: true,
+      fileName: true,
+      sheetName: true,
+      created: true,
+      updated: true,
+      skipped: true,
+      createdAt: true,
+    },
+  });
+  return rows.map((r) => ({ ...r, entity: r.entity as Entity }));
+}
+
+export async function deleteImport(id: number): Promise<{ deleted: number; cascadeDeleted: number }> {
+  const log = await prisma.importLog.findUnique({ where: { id } });
+  if (!log) fail("سجل الاستيراد غير موجود", 404);
+
+  const rawIds = Array.isArray(log.createdIds) ? log.createdIds : [];
+  const ids = rawIds.filter((n): n is number => typeof n === "number");
+  let deleted = 0;
+  // السجلات المرتبطة اللي بتمسح مع السجلات الأساسية (Cascade) — تُعرض للمستخدم قبل التأكيد وبعده
+  let cascadeDeleted = 0;
+
+  // حذف على دفعات عشان استيراد ضخم (عشرات الآلاف) ما يكسّر حدود معاملات PostgreSQL
+  const doDelete = async (del: (part: number[]) => Promise<{ count: number }>) => {
+    let total = 0;
+    for (const part of chunk(ids, 1000)) total += (await del(part)).count;
+    return total;
+  };
+
+  if (ids.length > 0) {
+    if (log.entity === "equipments") {
+      // حذف المعدات بيمسح معها كل بياناتها المرتبطة تلقائيًا (سجل يومي، صيانة، أعطال، أوامر إصلاح، مواعيد، عدادات)
+      const [dailyLogs, maintenance, faults, repairOrders, partSchedules, oilSchedules, meterResets] =
+        await Promise.all([
+          prisma.dailyLog.count({ where: { equipmentId: { in: ids } } }),
+          prisma.maintenance.count({ where: { equipmentId: { in: ids } } }),
+          prisma.fault.count({ where: { equipmentId: { in: ids } } }),
+          prisma.repairOrder.count({ where: { equipmentId: { in: ids } } }),
+          prisma.partSchedule.count({ where: { equipmentId: { in: ids } } }),
+          prisma.oilSchedule.count({ where: { equipmentId: { in: ids } } }),
+          prisma.meterReset.count({ where: { equipmentId: { in: ids } } }),
+        ]);
+      cascadeDeleted =
+        dailyLogs + maintenance + faults + repairOrders + partSchedules + oilSchedules + meterResets;
+      deleted = await doDelete((part) => prisma.equipment.deleteMany({ where: { id: { in: part } } }));
+    } else if (log.entity === "projects") {
+      // حذف المشاريع بيمسح القطاعات التابعة لها — والمعدات المرتبطة تفقد الربط فقط (SetNull)
+      cascadeDeleted = await prisma.sector.count({ where: { projectId: { in: ids } } });
+      deleted = await doDelete((part) => prisma.project.deleteMany({ where: { id: { in: part } } }));
+    } else if (log.entity === "dailylogs") {
+      deleted = await doDelete((part) => prisma.dailyLog.deleteMany({ where: { id: { in: part } } }));
+    } else if (log.entity === "maintenance") {
+      // الأصناف المرتبطة بأمر الشغل بتحذف معه تلقائيًا (Cascade)
+      cascadeDeleted = await prisma.workPart.count({ where: { maintenanceId: { in: ids } } });
+      deleted = await doDelete((part) => prisma.maintenance.deleteMany({ where: { id: { in: part } } }));
+    } else if (log.entity === "partschedules") {
+      deleted = await doDelete((part) => prisma.partSchedule.deleteMany({ where: { id: { in: part } } }));
+    }
+  }
+
+  await prisma.importLog.delete({ where: { id } });
+  return { deleted, cascadeDeleted };
+}
+
+export interface ManagersProjectsSyncResult {
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+}
+
+/**
+ * جلب كل مشاريع نظام المدرين (/requisitions/projects) ومزامنتها مع المشاريع المحلية:
+ * المطابقة بالكود أولًا ثم بالاسم (بعد التطبيع العربي) — المشروع الموجود بيتحدّث واللي مش موجود بيتعمل جديد.
+ * لو حصل أي تغيير بيتتسجّل في سجل الاستيراد عشان يظهر في «إدارة البيانات» ويتمكّن ROOT من حذفه.
+ */
+export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncResult> {
+  const remote = await managersProjects(true);
+  const result: ManagersProjectsSyncResult = { fetched: remote.length, created: 0, updated: 0, unchanged: 0 };
+  const createdIds: number[] = [];
+
+  const local = await prisma.project.findMany({ select: { id: true, code: true, name: true } });
+  const byCode = new Map<string, (typeof local)[number]>();
+  const byName = new Map<string, (typeof local)[number]>();
+  for (const p of local) {
+    if (p.code) byCode.set(p.code.trim().toLowerCase(), p);
+    const n = normalizeArabic(p.name).replace(/\s+/g, "");
+    if (n && !byName.has(n)) byName.set(n, p);
+  }
+
+  for (const r of remote) {
+    const remoteName = normalizeArabic(r.title).replace(/\s+/g, "");
+    const match =
+      (r.code ? byCode.get(r.code.trim().toLowerCase()) : undefined) ??
+      (remoteName ? byName.get(remoteName) : undefined);
+
+    if (!match) {
+      const made = await prisma.project.create({ data: { code: r.code, name: r.title } });
+      createdIds.push(made.id);
+      result.created++;
+      if (r.code) byCode.set(r.code.trim().toLowerCase(), made);
+      if (remoteName && !byName.has(remoteName)) byName.set(remoteName, made);
+      continue;
+    }
+
+    const data: { name?: string; code?: string | null } = {};
+    if (match.name !== r.title) data.name = r.title;
+    if (r.code && match.code !== r.code) {
+      // الكود عليه قيد فريد محليًا — لو مشغول من مشروع تاني نكتفي بتحديث الاسم
+      const owner = await prisma.project.findUnique({ where: { code: r.code }, select: { id: true } });
+      if (!owner || owner.id === match.id) data.code = r.code;
+    }
+    if (Object.keys(data).length > 0) {
+      await prisma.project.update({ where: { id: match.id }, data });
+      result.updated++;
+    } else {
+      result.unchanged++;
+    }
+  }
+
+  if (result.created > 0 || result.updated > 0) {
+    await prisma.importLog.create({
+      data: {
+        entity: "projects",
+        fileName: "نظام المدرين",
+        sheetName: "مزامنة تلقائية للمشاريع",
+        created: result.created,
+        updated: result.updated,
+        skipped: 0,
+        createdIds,
+      },
+    });
+  }
+  return result;
+}
+
+const envSyncInterval = Number(process.env.PROJECTS_SYNC_INTERVAL_MIN);
+const PROJECTS_SYNC_INTERVAL_MS =
+  (Number.isFinite(envSyncInterval) && envSyncInterval > 0 ? envSyncInterval : 60) * 60 * 1000;
+
+/**
+ * مزامنة تلقائية لمشاريع نظام المدرين: تشتغل مرة عند تشغيل السيرفر ثم كل ساعة —
+ * بتشتغل في الخلفية وما بتوقفش السيرفر لو نظام المدرين مغلّق (بتتسجّل محاولة فاشلة ونستنى اللفة الجاية).
+ */
+export function startProjectsAutoSync(intervalMs = PROJECTS_SYNC_INTERVAL_MS) {
+  const run = async () => {
+    try {
+      const result = await withDbRetry(() => syncProjectsFromManagers());
+      console.log(
+        `[projects-sync] ${result.fetched} مشروع من نظام المدرين — ${result.created} جديد، ${result.updated} تحديث، ${result.unchanged} بدون تغيير`
+      );
+    } catch (err) {
+      console.warn(
+        `[projects-sync] تعذّرت مزامنة المشاريع من نظام المدرين: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+  // تأخير بسيط عن الإقلاع عشان القاعدة تستيقظ والسيرفر يفتح أوّلًا
+  const boot = setTimeout(run, 15_000);
+  boot.unref?.();
+  const timer = setInterval(run, intervalMs);
+  timer.unref?.();
+  return () => {
+    clearTimeout(boot);
+    clearInterval(timer);
   };
 }
 

@@ -48,7 +48,9 @@ export async function importData(req: Request, res: Response, next: NextFunction
     const sheetRaw = req.body?.sheet;
     const sheet = typeof sheetRaw === "string" && sheetRaw.trim() ? sheetRaw.trim() : undefined;
     await wakeDb();
-    const result = await withDbRetry(() => dataService.importEntity(entity, file.buffer, sheet));
+    const result = await withDbRetry(() =>
+      dataService.importEntity(entity, file.buffer, sheet, file.originalname)
+    );
     res.json(result);
   } catch (err) {
     next(err);
@@ -67,6 +69,36 @@ export async function clearEntity(req: Request, res: Response, next: NextFunctio
 export async function clearAll(_req: Request, res: Response, next: NextFunction) {
   try {
     res.json(await withDbRetry(() => dataService.clearAll()));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listImports(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await withDbRetry(() => dataService.listImports()));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteImport(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw Object.assign(new Error("رقم سجل الاستيراد غير صالح"), { status: 400 });
+    }
+    await wakeDb();
+    res.json(await withDbRetry(() => dataService.deleteImport(id)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function syncProjects(_req: Request, res: Response, next: NextFunction) {
+  try {
+    await wakeDb();
+    res.json(await withDbRetry(() => dataService.syncProjectsFromManagers()));
   } catch (err) {
     next(err);
   }

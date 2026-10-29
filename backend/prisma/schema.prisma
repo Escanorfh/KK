@@ -70,6 +70,7 @@ model User {
   repairOrderEvents   RepairOrderEvent[]
   needRequestsCreated NeedRequest[]
   projects            UserProject[]
+  oilConsumptions     OilConsumption[]
 }
 
 model Project {
@@ -147,6 +148,7 @@ model Equipment {
   meterResets   MeterReset[]
   faults        Fault[]
   repairOrders  RepairOrder[]
+  oilConsumptions OilConsumption[]
 }
 
 model MeterReset {
@@ -318,6 +320,7 @@ model Maintenance {
   userId          Int?
   user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   workParts       WorkPart[]
+  oilConsumptions OilConsumption[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 }
@@ -331,6 +334,51 @@ model WorkPart {
   qty           Float?
   notes         String?
   createdAt     DateTime    @default(now())
+}
+
+/// أنواع الزيوت المستخدمة في المعدات
+enum OilType {
+  ENGINE
+  HYDRAULIC
+  STEERING
+  GEARBOX
+  OTHER
+}
+
+/// مصدر قيد الاستهلاك: يدوي أو مستورد من أمر صيانة
+enum OilSource {
+  MANUAL
+  MAINTENANCE
+}
+
+/// قيد استهلاك زيت — إما إدخال يدوي أو مستورد تلقائيًا من صيانة (WorkPart فيها اسم زيت)
+model OilConsumption {
+  id            Int         @id @default(autoincrement())
+  date          DateTime    @db.Date
+  equipmentId   Int
+  equipment     Equipment   @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  oilType       OilType
+  /// اسم الزيت الحر (مثال: "shell rimula 15w40") — اختياري للتفصيل
+  oilName       String?
+  /// الكمية المستهلكة باللترات
+  liters        Float
+  /// سعر اللتر (اختياري)
+  pricePerLiter Float?
+  /// الإجمالي = liters × pricePerLiter (يُحتسب تلقائيًا)
+  totalAmount   Float?
+  source        OilSource   @default(MANUAL)
+  /// مرجع أمر الصيانة لو القيد مستورد تلقائيًا
+  maintenanceId Int?
+  maintenance   Maintenance? @relation(fields: [maintenanceId], references: [id], onDelete: SetNull)
+  notes         String?
+  userId        Int?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([equipmentId, date])
+  @@index([oilType])
+  @@index([source])
 }
 
 model OilSchedule {
@@ -391,4 +439,20 @@ model AuditLog {
   action    String
   details   Json?
   createdAt DateTime @default(now())
+}
+
+/// سجل استيراد شيتات الإكسل — يتيح حذف بيانات شيت بعينه لاحقًا
+model ImportLog {
+  id        Int      @id @default(autoincrement())
+  entity    String
+  fileName  String
+  sheetName String
+  created   Int      @default(0)
+  updated   Int      @default(0)
+  skipped   Int      @default(0)
+  /// معرّفات السجلات التي أنشأها هذا الاستيراد (للحذف الانتقائي)
+  createdIds Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity])
 }

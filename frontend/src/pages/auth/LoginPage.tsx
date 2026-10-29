@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import ConnectionStatus from "@/components/ConnectionStatus";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -20,7 +20,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const data = await loginRequest(email.trim(), password);
+      const data = await loginRequest(name.trim(), password);
       login(data.token, data.user);
       navigate(from, { replace: true });
     } catch (err) {
@@ -46,17 +46,14 @@ export default function LoginPage() {
           className="bg-white rounded-2xl shadow-xl p-6 space-y-4"
         >
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-              البريد الإلكتروني
-            </label>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">الاسم</label>
             <input
-              type="email"
+              type="text"
               required
-              dir="ltr"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              placeholder="admin@efms.com"
+              placeholder="اكتب اسمك كما هو مسجّل"
             />
           </div>
 

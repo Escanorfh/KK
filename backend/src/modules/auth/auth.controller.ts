@@ -3,8 +3,8 @@ import * as authService from "./auth.service";
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
-    const { email, password } = req.body;
-    const result = await authService.login(email, password);
+    const { name, password } = req.body;
+    const result = await authService.login(name, password);
     res.json(result);
   } catch (err) {
     next(err);

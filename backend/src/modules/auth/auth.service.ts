@@ -2,15 +2,24 @@ import bcrypt from "bcryptjs";
 import prisma from "../../config/prisma";
 import { signToken } from "../../utils/jwt";
 
-export async function login(email: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !user.active) {
-    throw Object.assign(new Error("البريد أو كلمة السر غير صحيحة"), { status: 401 });
+export async function login(name: string, password: string) {
+  // الاسم غير فريد في القاعدة — لو أكتر من واحد بنفس الاسم، كلمة السر هي الفيصل
+  const candidates = await prisma.user.findMany({
+    where: { name: { equals: name.trim(), mode: "insensitive" } },
+  });
+
+  let user: (typeof candidates)[number] | null = null;
+  for (const candidate of candidates) {
+    if (!candidate.active) continue;
+    const ok = await bcrypt.compare(password, candidate.password);
+    if (ok) {
+      user = candidate;
+      break;
+    }
   }
 
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) {
-    throw Object.assign(new Error("البريد أو كلمة السر غير صحيحة"), { status: 401 });
+  if (!user) {
+    throw Object.assign(new Error("الاسم أو كلمة السر غير صحيحة"), { status: 401 });
   }
 
   const token = signToken({ id: user.id, role: user.role, name: user.name });

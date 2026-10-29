@@ -2,6 +2,7 @@ import type { Prisma, TrackingMode } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { resolveTrackingSetup, UNCLASSIFIED_CATEGORY } from "./trackingMode";
+import { scopeOr } from "../../utils/scope";
 
 const equipmentInclude = {
   project: { select: { id: true, name: true } },
@@ -180,6 +181,7 @@ export async function removeCategory(id: number, userId: number) {
 }
 
 export async function lookup(code: string, scope?: number[] | null) {
+  const own = scopeOr(scope);
   const results = await prisma.equipment.findMany({
     where: {
       AND: [
@@ -189,7 +191,7 @@ export async function lookup(code: string, scope?: number[] | null) {
             { name: { contains: code, mode: "insensitive" } },
           ],
         },
-        ...(scope ? [{ projectId: { in: scope } }] : []),
+        ...(own ? [{ OR: own }] : []),
       ],
     },
     include: equipmentInclude,
@@ -308,7 +310,8 @@ export async function list({ q, projectId, page, pageSize, scope }: ListParams) 
     });
   }
   if (projectId) and.push({ projectId });
-  if (scope) and.push({ projectId: { in: scope } });
+  const own = scopeOr(scope);
+  if (own) and.push({ OR: own });
   const where: Prisma.EquipmentWhereInput = and.length ? { AND: and } : {};
 
   const [data, total] = await Promise.all([

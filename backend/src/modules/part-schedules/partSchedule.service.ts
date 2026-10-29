@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { scopeOr } from "../../utils/scope";
 
 function fail(message: string, status: number): never {
   throw Object.assign(new Error(message), { status });
@@ -552,10 +553,11 @@ export async function alerts(params: {
   q?: string;
   scope?: number[] | null;
 }) {
+  const own = scopeOr(params.scope);
   const equipment = await prisma.equipment.findMany({
     where: {
       ...(params.projectId ? { projectId: params.projectId } : {}),
-      ...(params.scope ? { projectId: { in: params.scope } } : {}),
+      ...(own ? { OR: own } : {}),
       ...(params.q
         ? {
             OR: [

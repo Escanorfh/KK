@@ -100,6 +100,11 @@ export function kvSet(key: string, data: unknown): Promise<IDBValidKey> {
   return run(KV, "readwrite", (s) => s.put({ key, data, at: Date.now() } satisfies CachedResponse));
 }
 
+/** يمسح كاش القراءة فقط (الـ outbox يفضل) — مفتاح الكاش هو الـ URL وحده، فبدون المسح أي حساب على نفس الجهاز يقرأ داتا من سبقه. */
+export function clearKv(): Promise<void> {
+  return mutate(KV, (s) => s.clear());
+}
+
 export async function kvGet<T = unknown>(key: string): Promise<CachedResponse<T> | undefined> {
   return run<CachedResponse<T> | undefined>(KV, "readonly", (s) => s.get(key));
 }

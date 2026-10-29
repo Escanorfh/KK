@@ -23,6 +23,8 @@ export interface Project {
   code?: string | null;
   name: string;
   description?: string | null;
+  /** عدّاد المعدات من شيت الـ day (آخر يوم مسجل) — لو مفيش سجل يومي يرجع للإسناد الحالي */
+  activeEquipment?: number;
   _count?: { equipment: number; sectors: number };
 }
 
@@ -30,6 +32,8 @@ export interface Sector {
   id: number;
   projectId: number;
   name: string;
+  /** عدّاد المعدات من شيت الـ day (آخر يوم مسجل) — لو مفيش سجل يومي يرجع للإسناد الحالي */
+  activeEquipment?: number;
 }
 
 export interface Equipment {

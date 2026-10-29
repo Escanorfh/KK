@@ -11,6 +11,13 @@ import {
   X,
   Send,
   RefreshCw,
+  Info,
+  ChevronDown,
+  Camera,
+  Plus,
+  Package,
+  Wrench,
+  Layers,
 } from "lucide-react";
 import { cn, todayLocal } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
@@ -27,7 +34,6 @@ import {
   syncRepairOrder,
   REPAIR_STATUS_LABELS,
   REPAIR_STATUS_CLS,
-  REPAIR_ITEM_CONDITIONS,
   REPAIR_UNITS,
   NEXT_STATUS_LABEL,
   STATUS_FLOW,
@@ -83,6 +89,67 @@ function StatusBadge({ status }: { status: RepairOrderStatus }) {
   );
 }
 
+/** عنوان قسم بأسلوب الصورة: أيقونة + نص + عدّاد + إجراء اختياري */
+function SectionHeader({
+  icon: Icon,
+  title,
+  count,
+  action,
+}: {
+  icon: typeof Info;
+  title: string;
+  count?: number;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2 mb-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <Icon size={15} className="text-primary-600 shrink-0" />
+        <h3 className="text-[13px] font-extrabold text-slate-700 truncate">{title}</h3>
+        {count != null && (
+          <span className="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 shrink-0">
+            ({count})
+          </span>
+        )}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function RadioOption({
+  checked,
+  onChange,
+  label,
+  dot,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  dot: string;
+}) {
+  return (
+    <label
+      onClick={onChange}
+      className={cn(
+        "flex items-center gap-2 cursor-pointer rounded-lg border px-3 py-2 transition-colors",
+        checked ? "border-primary-300 bg-primary-50" : "border-slate-200 bg-white hover:bg-slate-50"
+      )}
+    >
+      <span
+        className={cn(
+          "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0",
+          checked ? "border-primary-600" : "border-slate-300"
+        )}
+      >
+        {checked && <span className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+      </span>
+      <span className={dot} />
+      <span className="text-[12px] font-semibold text-slate-600">{label}</span>
+    </label>
+  );
+}
+
 export default function RepairOrdersPage() {
   const { user } = useAuth();
   const canManage = user?.role === "ROOT" || user?.role === "ADMIN";
@@ -105,6 +172,7 @@ export default function RepairOrdersPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(true);
 
   // equipment lookup
   const [eqQ, setEqQ] = useState("");
@@ -206,8 +274,8 @@ export default function RepairOrdersPage() {
     setView("form");
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async (e?: React.FormEvent, sendAfter = false) => {
+    e?.preventDefault();
     const errors: Record<string, string[]> = {};
     if (!form.equipmentId) errors.equipmentId = ["اختر المعدة من القائمة"];
     if (!form.itemName.trim()) errors.itemName = ["اسم القطعة مطلوب"];
@@ -229,8 +297,22 @@ export default function RepairOrdersPage() {
         return;
       }
       toast.success(editId ? "تم تعديل الطلب" : `تم إنشاء طلب الإصلاح #${res.record.requestNo}`);
-      setView("detail");
       setSelected(res.record);
+      if (sendAfter && !res.record.sentAt && !res.record.managersId) {
+        setSending(true);
+        try {
+          await sendRepairOrder(res.record.id);
+          const fresh = await getRepairOrder(res.record.id);
+          setSelected(fresh.record);
+          toast.success(`تم إرسال طلب الإصلاح #${res.record.requestNo} إلى نظام المدرين`);
+          load();
+        } catch (se) {
+          toast.error(getApiError(se));
+        } finally {
+          setSending(false);
+        }
+      }
+      setView("detail");
     } catch (e) {
       const fe = getApiFieldErrors(e);
       if (Object.keys(fe).length) setFieldErrors(fe);
@@ -504,10 +586,54 @@ export default function RepairOrdersPage() {
       )}
 
       {view === "form" && (
-        <form onSubmit={handleSave} className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">بيانات المعدة والطلب</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <form
+          onSubmit={(e) => handleSave(e, false)}
+          className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden"
+        >
+          {/* ===== ترويسة النموذج (بنية الصورة) ===== */}
+          <div className="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                title="إغلاق"
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors shrink-0"
+              >
+                <X size={18} />
+              </button>
+              <div className="min-w-0">
+                <p className="text-sm font-extrabold text-slate-800 truncate">
+                  {editId ? "تعديل أمر إصلاح" : "أمر إصلاح — إضافة جديد"}
+                </p>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {editId
+                    ? `تعديل الطلب رقم #${editId}`
+                    : "أمر إصلاح جديد — اضغط «حفظ وإرسال» عشان يُرسل لنظام المدرين"}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setView("list")}
+              className="text-xs font-bold text-slate-500 hover:text-slate-800 shrink-0"
+            >
+              القائمة
+            </button>
+          </div>
+
+          <div className="p-5 space-y-5">
+            {/* ===== بانر تنبيه ===== */}
+            <div className="flex items-start gap-2.5 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
+              <Info size={16} className="text-amber-500 mt-0.5 shrink-0" />
+              <p className="text-[12px] text-amber-800 leading-relaxed">
+                اختر كود المعدة أولًا — هتتعبّى بيانات المشروع والقطاع تلقائيًا. بعد الحفظ تقدر ترسل الطلب إلى{" "}
+                <b>نظام المدرين</b> وتتابع مراحله حتى رجوع المعدة للموقع.
+              </p>
+            </div>
+
+            <section className="space-y-3">
+              <SectionHeader icon={Wrench} title="بيانات الطلب والمعدة" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="relative" ref={boxRef}>
                 <label className={labelCls}>
                   كود المعدة <span className="text-red-500">*</span>
@@ -623,10 +749,38 @@ export default function RepairOrdersPage() {
           </section>
 
           <section className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">
-              بيانات القطعة المراد إصلاحها
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <SectionHeader
+              icon={Package}
+              title="بيانات القطعة / المعدة المطلوبة"
+              action={
+                <button
+                  type="button"
+                  onClick={addPartRow}
+                  className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 border border-primary-200 rounded-lg px-2 py-1"
+                >
+                  <Plus size={13} /> إضافة صنف
+                </button>
+              }
+            />
+            {/* قسم قابل للطي — بنفس مظهر «البيانات (1) - تلقائي» في الصورة */}
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAutoOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-2 bg-slate-50 hover:bg-slate-100 px-3 py-2 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-[12px] font-bold text-slate-700">
+                  <Info size={14} className="text-primary-600" />
+                  البيانات (1) — تلقائي
+                </span>
+                <ChevronDown
+                  size={16}
+                  className={cn("text-slate-400 transition-transform", autoOpen ? "" : "-rotate-90")}
+                />
+              </button>
+              {autoOpen && (
+                <div className="p-3 pt-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3">
               <div className="md:col-span-2">
                 <label className={labelCls}>
                   اسم القطعة / الصنف <span className="text-red-500">*</span>
@@ -700,30 +854,38 @@ export default function RepairOrdersPage() {
                 </datalist>
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className={labelCls}>حالة القطعة</label>
-                <select
-                  value={form.itemCondition}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, itemCondition: e.target.value as RepairItemCondition }))
-                  }
-                  className={cn(inputCls, "w-full")}
-                >
-                  {REPAIR_ITEM_CONDITIONS.map((condition) => (
-                    <option key={condition} value={condition}>
-                      {condition}
-                    </option>
-                  ))}
-                </select>
+                <div className="grid grid-cols-3 gap-2">
+                  <RadioOption
+                    checked={form.itemCondition === "عاطلة"}
+                    onChange={() => setForm((f) => ({ ...f, itemCondition: "عاطلة" }))}
+                    label="عاطلة"
+                    dot="bg-red-500"
+                  />
+                  <RadioOption
+                    checked={form.itemCondition === "صالح"}
+                    onChange={() => setForm((f) => ({ ...f, itemCondition: "صالح" }))}
+                    label="صالح"
+                    dot="bg-emerald-500"
+                  />
+                  <RadioOption
+                    checked={form.itemCondition === "هالك"}
+                    onChange={() => setForm((f) => ({ ...f, itemCondition: "هالك" }))}
+                    label="هالك"
+                    dot="bg-amber-500"
+                  />
+                </div>
               </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
           <section className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">
-              الموقع ومقدم الطلب والمخازن
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <SectionHeader icon={Layers} title="الموقع ومقدم الطلب والمخازن" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className={labelCls}>الموقع</label>
                 <input
@@ -790,9 +952,9 @@ export default function RepairOrdersPage() {
           </section>
 
           <section className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">وصف العطل والإجراء</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-3">
+            <SectionHeader icon={Wrench} title="وصف العطل والإجراء" />
+            <div className="grid grid-cols-1 gap-4">
+              <div>
                 <label className={labelCls}>
                   وصف العطل <span className="text-red-500">*</span>
                 </label>
@@ -806,7 +968,7 @@ export default function RepairOrdersPage() {
                 {err("faultDescription") && <p className="text-xs text-red-600 mt-1">{err("faultDescription")}</p>}
               </div>
 
-              <div className="md:col-span-3">
+              <div>
                 <label className={labelCls}>الإجراء المتخذ</label>
                 <textarea
                   rows={3}
@@ -820,10 +982,8 @@ export default function RepairOrdersPage() {
           </section>
 
           <section className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">
-              التكاليف والمرفقات والملاحظات
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <SectionHeader icon={Info} title="التكاليف والمرفقات والملاحظات" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className={labelCls}>التكلفة التقديرية</label>
                 <input
@@ -865,33 +1025,38 @@ export default function RepairOrdersPage() {
 
               <div className="md:col-span-2">
                 <label className={labelCls}>إرفاق صورة (حتى 5 ميجابايت)</label>
-                <div className="flex items-center gap-2">
+                <label className="mt-1 flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-slate-300 rounded-lg py-6 cursor-pointer hover:border-primary-400 hover:bg-primary-50/40 transition-colors">
+                  <Camera size={26} className="text-slate-400" />
+                  <span className="text-xs font-bold text-slate-600">اضغط لاختيار صورة العطل</span>
+                  <span className="text-[10px] text-slate-400">JPG / PNG / WEBP</span>
                   <input
                     type="file"
                     accept="image/*"
                     onChange={handleImagePick}
-                    className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
+                    className="hidden"
                   />
-                  {form.imageBase64 && (
-                    <button
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, imageBase64: null }))}
-                      className="shrink-0 text-xs font-bold text-red-500 hover:text-red-600"
-                    >
-                      إزالة
-                    </button>
-                  )}
-                </div>
+                </label>
                 {(form.imageBase64 || form.imageUrl) && (
-                  <img
-                    src={form.imageBase64 || form.imageUrl || ""}
-                    alt="صورة العطل"
-                    className="mt-2 h-20 w-20 rounded-lg object-cover border border-slate-200"
-                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <img
+                      src={form.imageBase64 || form.imageUrl || ""}
+                      alt="صورة العطل"
+                      className="h-20 w-20 rounded-lg object-cover border border-slate-200"
+                    />
+                    {form.imageBase64 && (
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, imageBase64: null }))}
+                        className="text-xs font-bold text-red-500 hover:text-red-600"
+                      >
+                        إزالة الصورة
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
-              <div className="md:col-span-4">
+              <div className="md:col-span-2">
                 <label className={labelCls}>ملاحظات</label>
                 <textarea
                   rows={2}
@@ -905,16 +1070,20 @@ export default function RepairOrdersPage() {
           </section>
 
           <div className="border border-slate-200 rounded-lg p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-slate-700">قطع الغيار والمستهلكات</h3>
-              <button
-                type="button"
-                onClick={addPartRow}
-                className="text-xs font-bold text-primary-600 hover:text-primary-700"
-              >
-                + إضافة صنف
-              </button>
-            </div>
+            <SectionHeader
+              icon={Layers}
+              title="قطع الغيار والمستهلكات"
+              count={form.parts.length}
+              action={
+                <button
+                  type="button"
+                  onClick={addPartRow}
+                  className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 border border-primary-200 rounded-lg px-2 py-1"
+                >
+                  <Plus size={13} /> إضافة صنف
+                </button>
+              }
+            />
             {form.parts.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-3">لا توجد أصناف</p>
             ) : (
@@ -981,20 +1150,33 @@ export default function RepairOrdersPage() {
               </div>
             )}
           </div>
+          </div>
 
-          <div className="flex items-center gap-2">
+          {/* ===== شريط الأزرار السفلي (بنية الصورة) ===== */}
+          <div className="flex items-center gap-2 px-5 py-3 bg-slate-50 border-t border-slate-200">
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || sending}
               className="flex items-center gap-1.5 text-sm font-bold rounded-lg bg-primary-600 text-white px-5 py-2.5 hover:bg-primary-700 disabled:opacity-60"
             >
-              {saving && <Loader2 size={15} className="animate-spin" />}
-                {editId ? "حفظ التعديلات" : "إنشاء طلب الإصلاح"}
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Info size={15} />}
+              {editId ? "حفظ التعديلات" : "إنشاء طلب الإصلاح"}
             </button>
+            {!editId && (
+              <button
+                type="button"
+                disabled={saving || sending}
+                onClick={(e) => handleSave(e, true)}
+                className="flex items-center gap-1.5 text-sm font-bold rounded-lg bg-amber-500 text-white px-5 py-2.5 hover:bg-amber-600 disabled:opacity-60"
+              >
+                {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                حفظ وإرسال للمدرين
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setView("list")}
-              className="text-sm font-bold rounded-lg border border-slate-300 text-slate-600 px-4 py-2.5 hover:bg-slate-50"
+              className="text-sm font-bold rounded-lg border border-slate-300 text-slate-600 px-4 py-2.5 hover:bg-slate-100"
             >
               إلغاء
             </button>

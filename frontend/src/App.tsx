@@ -7,6 +7,7 @@ import WorkPage from "./pages/work/WorkPage";
 import DataWorkPage from "./pages/data-work/DataWorkPage";
 import FaultsPage from "./pages/faults/FaultsPage";
 import OilAlertsPage from "./pages/oil-alerts/OilAlertsPage";
+import OilConsumptionsPage from "./pages/oil-consumptions/OilConsumptionsPage";
 import EquipmentPage from "./pages/equipment/EquipmentPage";
 import TrackingModesPage from "./pages/tracking-modes/TrackingModesPage";
 import RepairOrdersPage from "./pages/repair-orders/RepairOrdersPage";
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/data-work" element={<DataWorkPage />} />
         <Route path="/faults" element={<FaultsPage />} />
         <Route path="/oil-alerts" element={<OilAlertsPage />} />
+        <Route path="/oil-consumptions" element={<OilConsumptionsPage />} />
         <Route path="/equipment" element={<EquipmentPage />} />
         <Route
           path="/tracking-modes"

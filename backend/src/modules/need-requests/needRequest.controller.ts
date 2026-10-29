@@ -23,7 +23,7 @@ export async function create(req: Request, res: Response, next: NextFunction) {
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const query = (req as Request & { validatedQuery: ListQuery }).validatedQuery;
-    res.json(await withDbRetry(() => needRequestService.list(query)));
+    res.json(await withDbRetry(() => needRequestService.list({ ...query, scope: req.scope })));
   } catch (err) {
     next(err);
   }

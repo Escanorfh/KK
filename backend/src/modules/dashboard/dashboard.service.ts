@@ -1,6 +1,8 @@
 import prisma from "../../config/prisma";
+import { scopeOr } from "../../utils/scope";
 import { alerts } from "../part-schedules/partSchedule.service";
 import type { OverallStatus } from "../part-schedules/partSchedule.service";
+import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
 
 function monthKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -32,11 +34,10 @@ export async function summary(scope?: number[] | null) {
   monthsFrom.setMonth(monthsFrom.getMonth() - 11, 1);
   monthsFrom.setHours(0, 0, 0, 0);
 
-  const eqScope = scope ? { projectId: { in: scope } } : {};
-  const logScope = scope ? { equipment: { projectId: { in: scope } } } : {};
-  const faultScope = scope
-    ? { OR: [{ projectId: { in: scope } }, { equipment: { projectId: { in: scope } } }] }
-    : {};
+  const own = scopeOr(scope);
+  const eqScope = own ? { OR: own } : {};
+  const logScope = own ? { equipment: { OR: own } } : {};
+  const faultScope = own ? { OR: [...own, { equipment: { OR: own } }] } : {};
   const projScope = scope ? { id: { in: scope } } : {};
   const sectorScope = scope ? { projectId: { in: scope } } : {};
 
@@ -46,7 +47,6 @@ export async function summary(scope?: number[] | null) {
     maint12,
     faultsByStatus,
     faults12,
-    projects,
     conditions,
     topEquipmentRaw,
     recentFaults,
@@ -73,11 +73,6 @@ export async function summary(scope?: number[] | null) {
     prisma.fault.findMany({
       where: { date: { gte: monthsFrom }, ...faultScope },
       select: { date: true, downtimeHours: true },
-    }),
-    prisma.equipment.groupBy({
-      by: ["projectId"],
-      _count: { _all: true },
-      where: eqScope,
     }),
     prisma.dailyLog.groupBy({
       by: ["condition"],
@@ -209,13 +204,25 @@ export async function summary(scope?: number[] | null) {
     .slice(0, 10)
     .map((e) => ({ ...e, hours: Math.round(e.hours * 10) / 10, diesel: Math.round(e.diesel * 10) / 10 }));
 
-  // المعدات حسب المشروع
+  // المعدات حسب المشروع — من شيت الـ day (آخر يوم) لأن المعدات بتتنقل بين المشاريع
+  const lastDay = await lastDayEquipmentCounts(scope);
+  let projCount: Map<number | null, number>;
+  if (lastDay.lastLogDate) {
+    projCount = lastDay.byProject;
+  } else {
+    // مفيش أي سجل يومي مسجل — نرجع لعدّ الإسناد الحالي
+    const eqGroup = await prisma.equipment.groupBy({
+      by: ["projectId"],
+      _count: { _all: true },
+      where: eqScope,
+    });
+    projCount = new Map(eqGroup.map((p) => [p.projectId, p._count._all]));
+  }
   const projectRows = await prisma.project.findMany({
     where: projScope,
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });
-  const projCount = new Map(projects.map((p) => [p.projectId, p._count._all]));
   const equipmentByProject = [
     ...projectRows.map((p) => ({ name: p.name, count: projCount.get(p.id) ?? 0 })),
     { name: "بدون مشروع", count: projCount.get(null) ?? 0 },
@@ -246,6 +253,7 @@ export async function summary(scope?: number[] | null) {
     })),
     faultsByStatus: faultsByStatus.map((f) => ({ status: f.status, count: f._count._all })),
     equipmentByProject,
+    lastEquipmentLogDate: lastDay.lastLogDate,
     conditions: {
       GOOD: conditionMap.get("GOOD") ?? 0,
       BROKEN: conditionMap.get("BROKEN") ?? 0,

@@ -1,20 +1,30 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
 
 export async function list(projectId?: number, scope?: number[] | null) {
   const and: Prisma.SectorWhereInput[] = [];
   if (projectId) and.push({ projectId });
   if (scope) and.push({ projectId: { in: scope } });
 
-  return prisma.sector.findMany({
-    where: and.length ? { AND: and } : {},
-    orderBy: [{ projectId: "asc" }, { name: "asc" }],
-    include: {
-      _count: { select: { equipment: true } },
-      project: { select: { id: true, name: true } },
-    },
-  });
+  const [rows, lastDay] = await Promise.all([
+    prisma.sector.findMany({
+      where: and.length ? { AND: and } : {},
+      orderBy: [{ projectId: "asc" }, { name: "asc" }],
+      include: {
+        _count: { select: { equipment: true } },
+        project: { select: { id: true, name: true } },
+      },
+    }),
+    lastDayEquipmentCounts(),
+  ]);
+
+  // عدّاد المعدات من شيت الـ day (آخر يوم) — لأن المعدات بتتنقل، ولو مفيش سجل يومي خالص نرجع للإسناد الحالي
+  return rows.map((s) => ({
+    ...s,
+    activeEquipment: lastDay.lastLogDate ? (lastDay.bySector.get(s.id) ?? 0) : s._count.equipment,
+  }));
 }
 
 export async function create(data: { projectId: number; name: string }, userId: number) {

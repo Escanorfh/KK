@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { assertReadingNotDecreasing } from "../../utils/meterReading";
+import { scopeOr } from "../../utils/scope";
 
 const include = {
   equipment: {
@@ -339,7 +340,8 @@ function buildWhere({
       ],
     });
   }
-  if (scope) and.push({ equipment: { projectId: { in: scope } } });
+  const own = scopeOr(scope);
+  if (own) and.push({ equipment: { OR: own } });
 
   return and.length ? { AND: and } : {};
 }

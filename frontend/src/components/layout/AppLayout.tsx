@@ -7,6 +7,7 @@ import {
   ClipboardList,
   AlertTriangle,
   Droplets,
+  Fuel,
   FileCog,
   PackagePlus,
   HardHat,
@@ -46,6 +47,7 @@ const sections: { title: string; links: NavLink[] }[] = [
       { to: "/repair-orders", label: "أوامر الإصلاح", icon: FileCog },
       { to: "/need-requests", label: "طلبات الاحتياج", icon: PackagePlus },
       { to: "/oil-alerts", label: "تنبيهات الزيوت", icon: Droplets },
+      { to: "/oil-consumptions", label: "استهلكات الزيوت", icon: Fuel },
     ],
   },
   {

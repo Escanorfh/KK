@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { assertReadingNotDecreasing } from "../../utils/meterReading";
+import { scopeOr } from "../../utils/scope";
 
 const include = {
   equipment: {
@@ -86,6 +87,39 @@ async function assertMeterNotBelowBaseline(
   });
 }
 
+const DAY_MS = 86_400_000;
+
+function isoDay(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * اليوم لازم يمسق آخر يوم مسجّل للمعدة — من غيره السجلات بتتخطى أيام والعداد بيضل قديم.
+ * أول سجل للمعدة بيتقبل في أي تاريخ لأنه مفيش يوم ناقص قبله.
+ */
+async function assertNoMissingDay(equipmentId: number, date: Date) {
+  const last = await prisma.dailyLog.findFirst({
+    where: { equipmentId, date: { lt: date } },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  if (!last) return;
+  if (last.date.getTime() === date.getTime() - DAY_MS) return;
+
+  const missing: string[] = [];
+  for (let t = last.date.getTime() + DAY_MS; t < date.getTime() && missing.length < 3; t += DAY_MS) {
+    missing.push(isoDay(new Date(t)));
+  }
+  const gapDays = Math.round((date.getTime() - last.date.getTime()) / DAY_MS) - 1;
+  throw Object.assign(
+    new Error(
+      `لا يمكن تسجيل ${isoDay(date)}: آخر يوم مسجّل لهذه المعدة هو ${isoDay(last.date)} — ` +
+        `سجّل أولاً ${missing.join("، ")}${gapDays > missing.length ? " …" : ""}`
+    ),
+    { status: 400 }
+  );
+}
+
 export async function save(input: SaveInput, userId: number) {
   const equipment = await ensureEquipment(input.equipmentId);
   assertHoursAllowed(equipment, input);
@@ -112,6 +146,8 @@ export async function save(input: SaveInput, userId: number) {
     await logAudit(userId, "DailyLog", record.id, "UPDATE", { reason: "same-day upsert" });
     return { record, updated: true };
   }
+
+  await assertNoMissingDay(input.equipmentId, date);
 
   const record = await prisma.dailyLog.create({ data: dataFields(input), include });
   await logAudit(userId, "DailyLog", record.id, "CREATE", { date: input.date });
@@ -277,7 +313,8 @@ function buildWhere({
       ],
     });
   }
-  if (scope) and.push({ equipment: { projectId: { in: scope } } });
+  const own = scopeOr(scope);
+  if (own) and.push({ equipment: { OR: own } });
 
   return and.length ? { AND: and } : {};
 }

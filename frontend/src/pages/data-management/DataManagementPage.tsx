@@ -14,6 +14,7 @@ import {
   Droplets,
   Users,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { cn, todayLocal } from "@/lib/utils";
 import { api, getApiError } from "@/lib/api";
@@ -44,6 +45,17 @@ interface SheetDialog {
   file: File;
   sheets: string[];
   chosen: string;
+}
+
+interface ImportLogRow {
+  id: number;
+  entity: string;
+  fileName: string;
+  sheetName: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  createdAt: string;
 }
 
 const normH = (v: unknown): string =>
@@ -101,13 +113,16 @@ const ENTITY_CARDS: {
   desc: string;
   columns: string;
   icon: typeof FolderKanban;
+  /** بدل استيراد Excel: زر جلب المشاريع من نظام المدرين (/requisitions/projects) */
+  syncManagers?: boolean;
 }[] = [
   {
     entity: "projects",
     title: "المشاريع",
-    desc: "تصدير و استيراد قائمة المشاريع (بتُنشأ تلقائيًا للمعدات والأوامر)",
+    desc: "المشاريع بتتزامن تلقائيًا مع نظام المدرين (‎/requisitions/projects) أول ما السيرفر يشتغل وكل ساعة — الكود أولًا ثم الاسم، والجديد بيتعمل والقديم بيتحدّث. الزر تحت لتحديث فوري",
     columns: "الكود | الاسم | الوصف",
     icon: FolderKanban,
+    syncManagers: true,
   },
   {
     entity: "equipments",
@@ -145,8 +160,23 @@ export default function DataManagementPage() {
   const [lastResult, setLastResult] = useState<{ entity: string; result: ImportResult } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [sheetDialog, setSheetDialog] = useState<SheetDialog | null>(null);
+  const [imports, setImports] = useState<ImportLogRow[]>([]);
+  const [importsError, setImportsError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ImportLogRow | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const pendingEntity = useRef<ImportEntity | null>(null);
+
+  const loadImports = useCallback(async () => {
+    try {
+      const { data } = await api.get<ImportLogRow[]>("/data/imports");
+      setImports(data);
+      setImportsError(null);
+    } catch (err) {
+      // سجل الاستيراد ميزة جديدة — لو السيرفر لسه قديم نعرض رسالة بدل ما نحرق الصفحة
+      setImportsError(getApiError(err));
+    }
+  }, []);
 
   const loadStats = useCallback(async () => {
     try {
@@ -159,7 +189,8 @@ export default function DataManagementPage() {
 
   useEffect(() => {
     loadStats();
-  }, [loadStats]);
+    loadImports();
+  }, [loadStats, loadImports]);
 
   const handleExport = async (entity: string) => {
     setBusy(`export:${entity}`);
@@ -186,6 +217,26 @@ export default function DataManagementPage() {
     fileRef.current?.click();
   };
 
+  const handleSyncProjects = async () => {
+    setBusy("sync-projects");
+    try {
+      const { data } = await api.post<{
+        fetched: number;
+        created: number;
+        updated: number;
+        unchanged: number;
+      }>("/data/sync-projects");
+      toast.success(
+        `تم جلب ${data.fetched} مشروع من نظام المدرين — ${data.created} جديد، ${data.updated} تحديث، ${data.unchanged} بدون تغيير`
+      );
+      loadStats();
+    } catch (err) {
+      toast.error(getApiError(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const doImport = async (entity: ImportEntity, file: File, sheet?: string) => {
     setBusy(`import:${entity}`);
     try {
@@ -198,6 +249,7 @@ export default function DataManagementPage() {
       setLastResult({ entity, result: data });
       toast.success(`تم الاستيراد: ${data.created} جديد — ${data.updated} تحديث — ${data.skipped} تخطي`);
       loadStats();
+      loadImports();
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
@@ -238,6 +290,7 @@ export default function DataManagementPage() {
       toast.success(`تم مسح ${label} (${data.deleted} سجل)`);
       setLastResult(null);
       loadStats();
+      loadImports();
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
@@ -258,12 +311,42 @@ export default function DataManagementPage() {
       setConfirmText("");
       setLastResult(null);
       loadStats();
+      loadImports();
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
       setBusy(null);
     }
   };
+
+  const handleDeleteImport = async (row: ImportLogRow) => {
+    setDeletingId(row.id);
+    try {
+      const { data } = await api.delete<{ deleted: number; cascadeDeleted: number }>(
+        `/data/imports/${row.id}`
+      );
+      if (data.cascadeDeleted > 0) {
+        toast.success(
+          `تم حذف ${data.deleted} سجل من «${row.sheetName}» + ${data.cascadeDeleted.toLocaleString(
+            "ar-EG"
+          )} سجل مرتبط تم مسحه معها`,
+          { duration: 6000 }
+        );
+      } else {
+        toast.success(`تم حذف ${data.deleted} سجل أضافها شيت «${row.sheetName}»`);
+      }
+      setConfirmDelete(null);
+      setLastResult(null);
+      loadStats();
+      loadImports();
+    } catch (err) {
+      toast.error(getApiError(err));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const entityLabel = (entity: string) => ENTITY_CARDS.find((c) => c.entity === entity)?.title ?? entity;
 
   const statCards = [
     { label: "المشاريع", value: stats?.projects ?? null, icon: FolderKanban },
@@ -330,18 +413,34 @@ export default function DataManagementPage() {
                   )}
                   تصدير
                 </button>
-                <button
-                  onClick={() => openImport(card.entity)}
-                  disabled={busy !== null}
-                  className="flex items-center gap-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors disabled:opacity-50"
-                >
-                  {busy === `import:${card.entity}` ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Upload size={14} />
-                  )}
-                  استيراد
-                </button>
+                {card.syncManagers ? (
+                  <button
+                    onClick={handleSyncProjects}
+                    disabled={busy !== null}
+                    title="تحديث فوري لقائمة المشاريع من نظام المدرين (المزامنة تلقائية كل ساعة)"
+                    className="flex items-center gap-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors disabled:opacity-50"
+                  >
+                    {busy === "sync-projects" ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={14} />
+                    )}
+                    تحديث من المدرين
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => openImport(card.entity)}
+                    disabled={busy !== null}
+                    className="flex items-center gap-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors disabled:opacity-50"
+                  >
+                    {busy === `import:${card.entity}` ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Upload size={14} />
+                    )}
+                    استيراد
+                  </button>
+                )}
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-slate-100">
@@ -422,6 +521,99 @@ export default function DataManagementPage() {
         </div>
       )}
 
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+          <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <Database size={15} className="text-primary-600" />
+            سجل الشيتات المستوردة
+          </h3>
+          <button
+            onClick={loadImports}
+            disabled={busy !== null || deletingId != null}
+            className="flex items-center gap-1.5 text-xs font-semibold rounded-lg border border-slate-300 px-3 py-1.5 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={13} /> تحديث
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-500 mb-3">
+          كل شيت استوردته من Excel بيبان هنا مع عدد السجلات اللي أضافها — زر الحذف بيمسح كل البيانات اللي الشيت
+          ده أضافها نهائيًا، ولو المعدة أو المشروع عليها سجلات مرتبطة (سجل يومي، أوامر شغل، أعطال، إلخ) بتتمسح
+          معها. لا يمكن التراجع.
+        </p>
+
+        {importsError ? (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <p className="text-[11px] text-amber-700 leading-relaxed">{importsError}</p>
+          </div>
+        ) : imports.length === 0 ? (
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-4 text-center">
+            <p className="text-xs text-slate-500">لسه مفيش شيتات مستوردة — أول استيراد من الأعلى هيسجّل هنا</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-xs min-w-[640px]">
+              <thead>
+                <tr className="text-slate-500 border-b border-slate-200">
+                  <th className="text-right font-semibold px-2 py-1.5">الشيت</th>
+                  <th className="text-right font-semibold px-2 py-1.5">الجدول</th>
+                  <th className="text-right font-semibold px-2 py-1.5">الملف</th>
+                  <th className="text-right font-semibold px-2 py-1.5">التاريخ</th>
+                  <th className="text-right font-semibold px-2 py-1.5">جديد</th>
+                  <th className="text-right font-semibold px-2 py-1.5">تحديث</th>
+                  <th className="text-right font-semibold px-2 py-1.5">تخطي</th>
+                  <th className="text-right font-semibold px-2 py-1.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {imports.map((row, idx) => (
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      "border-b border-slate-100 last:border-0",
+                      idx === 0 && "bg-primary-50/40"
+                    )}
+                  >
+                    <td className="px-2 py-2 font-semibold text-slate-800">
+                      {row.sheetName}
+                      {idx === 0 && (
+                        <span className="mr-1.5 text-[10px] font-bold text-primary-700 bg-primary-100 rounded-full px-1.5 py-0.5">
+                          الأحدث
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-slate-600">{entityLabel(row.entity)}</td>
+                    <td className="px-2 py-2 text-slate-500 max-w-[160px] truncate" dir="ltr" title={row.fileName}>
+                      {row.fileName}
+                    </td>
+                    <td className="px-2 py-2 text-slate-500 whitespace-nowrap">
+                      {row.createdAt ? new Date(row.createdAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="rounded-full bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5">{row.created}</span>
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="rounded-full bg-sky-100 text-sky-700 font-bold px-2 py-0.5">{row.updated}</span>
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="rounded-full bg-amber-100 text-amber-700 font-bold px-2 py-0.5">{row.skipped}</span>
+                    </td>
+                    <td className="px-2 py-2 text-left">
+                      <button
+                        onClick={() => setConfirmDelete(row)}
+                        disabled={busy !== null || deletingId != null}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg px-2 py-1 transition-colors disabled:opacity-50"
+                      >
+                        <Trash2 size={12} /> حذف بيانات الشيت
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="bg-white border border-red-200 rounded-xl p-4 shadow-sm">
         <h3 className="font-bold text-red-700 text-sm mb-1 flex items-center gap-2">
           <AlertTriangle size={15} /> منطقة الخطر — مسح كل البيانات
@@ -452,6 +644,71 @@ export default function DataManagementPage() {
           </button>
         </div>
       </div>
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-sm text-red-700 flex items-center gap-2">
+              <Trash2 size={15} /> حذف بيانات شيت «{confirmDelete.sheetName}»
+            </h3>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              هيمسح استيراد الشيت ده من الملف <b dir="ltr" className="font-mono">{confirmDelete.fileName}</b> يوم{" "}
+              {new Date(confirmDelete.createdAt).toLocaleString("ar-EG", { dateStyle: "medium", timeStyle: "short" })}:
+            </p>
+            <ul className="text-[11px] text-slate-600 leading-relaxed list-disc pr-4 space-y-1">
+              <li>
+                <b className="text-emerald-700">{confirmDelete.created}</b> سجل جديد ({entityLabel(confirmDelete.entity)})
+                هيتمسح نهائيًا
+              </li>
+              {confirmDelete.entity === "equipments" ? (
+                <li className="text-red-700 font-semibold">
+                  المعدات هتتمسح معاها كل السجلات المرتبطة: السجل اليومي، أوامر الشغل، الأعطال، أوامر الإصلاح،
+                  مواعيد الزيوت والأصناف
+                </li>
+              ) : confirmDelete.entity === "projects" ? (
+                <li className="text-red-700 font-semibold">
+                  المشاريع هتتمسح معاها القطاعات التابعة لها — والمعدات المرتبطة هتفضل موجودة بس من غير مشروع
+                </li>
+              ) : confirmDelete.entity === "maintenance" ? (
+                <li className="text-red-700 font-semibold">
+                  أوامر الشغل هتتمسح معاها الأصناف المرتبطة بكل أمر
+                </li>
+              ) : null}
+              <li>
+                السجلات الـ <b className="text-sky-700">{confirmDelete.updated}</b> اللي اتحدّثت بترتيبات تانية
+                مش هتتغير
+              </li>
+            </ul>
+            <p className="text-[11px] font-bold text-red-700">لا يمكن التراجع.</p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="text-xs font-semibold rounded-lg border border-slate-300 px-3 py-2 hover:bg-slate-50 transition-colors"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={() => handleDeleteImport(confirmDelete)}
+                disabled={deletingId != null}
+                className="flex items-center gap-1.5 text-xs font-bold rounded-lg bg-red-600 text-white px-4 py-2 hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deletingId === confirmDelete.id ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Trash2 size={14} />
+                )}
+                احذف بيانات الشيت
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {sheetDialog && (
         <div

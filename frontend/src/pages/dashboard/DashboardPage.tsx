@@ -375,9 +375,14 @@ export default function DashboardPage() {
         </div>
 
         <div className={cardCls}>
-          <h2 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+          <h2 className="text-sm font-bold text-slate-700 mb-1 flex items-center gap-1.5">
             <FolderKanban size={15} className="text-cyan-500" /> توزيع المعدات على المشاريع
           </h2>
+          <p className="text-[11px] text-slate-400 mb-3">
+            {data.lastEquipmentLogDate
+              ? `من شيت الـ day — آخر يوم مسجل: ${String(data.lastEquipmentLogDate).slice(0, 10)}`
+              : "من شيت الـ day (آخر يوم مسجل)"}
+          </p>
           {data.equipmentByProject.length === 0 ? (
             <div className="text-center text-slate-400 text-sm py-14">لا توجد معدات</div>
           ) : (

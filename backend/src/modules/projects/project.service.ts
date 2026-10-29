@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
 
 interface ListParams {
   q?: string;
@@ -23,7 +24,7 @@ export async function list({ q, page, pageSize, scope }: ListParams) {
     where.AND = [{ id: { in: scope } }];
   }
 
-  const [data, total] = await Promise.all([
+  const [rows, total, lastDay] = await Promise.all([
     prisma.project.findMany({
       where,
       orderBy: { name: "asc" },
@@ -32,9 +33,23 @@ export async function list({ q, page, pageSize, scope }: ListParams) {
       include: { _count: { select: { equipment: true, sectors: true } } },
     }),
     prisma.project.count({ where }),
+    lastDayEquipmentCounts(scope),
   ]);
 
-  return { data, total, page, pageSize };
+  // العدّاد الرسمي للمعدات بيتحسب من شيت الـ day (آخر يوم) لأن المعدات بتتنقل بين المشاريع،
+  // ولو مفيش أي سجل يومي خالص نرجع لعدّ الإسناد الحالي عشان الصفحة ما تبانش فاضية بالكامل
+  const data = rows.map((p) => ({
+    ...p,
+    activeEquipment: lastDay.lastLogDate ? (lastDay.byProject.get(p.id) ?? 0) : p._count.equipment,
+  }));
+
+  return {
+    data,
+    total,
+    page,
+    pageSize,
+    lastLogDate: lastDay.lastLogDate,
+  };
 }
 
 export async function options(scope?: number[] | null) {

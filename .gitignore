@@ -31,3 +31,6 @@ ALADABIA.xlsm
 npm-debug.log*
 Thumbs.db
 .DS_Store
+
+# نسخة الباكإند المستقلة (ريپو GitHub منفصل back_kk)
+back_kk/

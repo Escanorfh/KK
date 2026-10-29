@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import type { User } from "@/types";
+import { clearKv } from "@/lib/offline/db";
 
 interface AuthContextValue {
   token: string | null;
@@ -18,6 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const login = (newToken: string, newUser: User) => {
+    void clearKv().catch(() => undefined);
     localStorage.setItem("efms_token", newToken);
     localStorage.setItem("efms_user", JSON.stringify(newUser));
     setToken(newToken);
@@ -25,6 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    void clearKv().catch(() => undefined);
     localStorage.removeItem("efms_token");
     localStorage.removeItem("efms_user");
     setToken(null);

@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ChevronLeft,
   X,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
@@ -22,6 +23,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  syncProjectsFromManagers,
   listSectors,
   createSector,
   updateSector,
@@ -54,6 +56,8 @@ export default function ProjectsPage() {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastLogDate, setLastLogDate] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -73,6 +77,7 @@ export default function ProjectsPage() {
       const res = await listProjects({ q: q.trim() || undefined, page, pageSize: PAGE_SIZE });
       setProjects(res.data);
       setTotal(res.total);
+      setLastLogDate(res.lastLogDate ?? null);
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
@@ -145,6 +150,21 @@ export default function ProjectsPage() {
       load();
     } catch (err2) {
       toast.error(getApiError(err2));
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const r = await syncProjectsFromManagers();
+      toast.success(
+        `تم جلب ${r.fetched} مشروع من نظام المدرين — ${r.created} جديد، ${r.updated} تحديث، ${r.unchanged} بدون تغيير`
+      );
+      load();
+    } catch (err2) {
+      toast.error(getApiError(err2));
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -221,7 +241,8 @@ export default function ProjectsPage() {
         <div>
           <h1 className="text-lg font-bold text-slate-800">المشاريع والقطاعات</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            إدارة المشاريع وقطاعاتها — القطاعات بتتربط بالمعدات في شاشات البيانات
+            إدارة المشاريع وقطاعاتها — عدّاد المعدات بيتحسب من شيت الـ day (آخر يوم مسجل) لأن المعدات بتتنقل بين
+            المشاريع — المشاريع بتتزامن تلقائيًا مع نظام المدرين وكل ساعة، وزر «مزامنة من المدرين» بيجيبها فورًا
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -234,6 +255,17 @@ export default function ProjectsPage() {
               className={cn(inputCls, "pr-9")}
             />
           </div>
+          {user?.role === "ROOT" && (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              title="جلب مشاريع نظام المدرين (/requisitions/projects) ومزامنتها — الكود أولًا ثم الاسم"
+              className="flex items-center gap-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors disabled:opacity-60"
+            >
+              {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {syncing ? "جاري المزامنة..." : "مزامنة من المدرين"}
+            </button>
+          )}
           <button
             onClick={() => {
               resetForm();
@@ -321,7 +353,17 @@ export default function ProjectsPage() {
                 <th className={thCls}>الكود</th>
                 <th className={thCls}>اسم المشروع</th>
                 <th className={thCls}>الوصف</th>
-                <th className={cn(thCls, "text-center")}>المعدات</th>
+                <th
+                  className={cn(thCls, "text-center")}
+                  title="عدّاد المعدات بيتحسب من شيت الـ day (السجل اليومي) — أي معدة ليها سجل في آخر يوم بتتعدّ لمشروعها الحالي"
+                >
+                  المعدات
+                  {lastLogDate ? (
+                    <div className="text-[10px] font-normal text-slate-400 mt-0.5">
+                      من آخر يوم: {lastLogDate.slice(0, 10)}
+                    </div>
+                  ) : null}
+                </th>
                 <th className={cn(thCls, "text-center")}>القطاعات</th>
                 <th className={cn(thCls, "text-center")}>إجراءات</th>
               </tr>
@@ -351,7 +393,7 @@ export default function ProjectsPage() {
                       {p.description || "—"}
                     </td>
                     <td className={cn(tdCls, "text-center font-mono text-xs")}>
-                      {p._count?.equipment ?? 0}
+                      {p.activeEquipment ?? p._count?.equipment ?? 0}
                     </td>
                     <td className={cn(tdCls, "text-center font-mono text-xs")}>
                       {p._count?.sectors ?? 0}
@@ -498,8 +540,11 @@ export default function ProjectsPage() {
                           <span className="flex-1 text-[13px] font-semibold text-slate-700 truncate">
                             {s.name}
                           </span>
-                          <span className="text-[11px] font-mono text-slate-400 shrink-0">
-                            {s._count?.equipment ?? 0} معدة
+                          <span
+                            className="text-[11px] font-mono text-slate-400 shrink-0"
+                            title="عدّاد المعدات من شيت الـ day (آخر يوم مسجل)"
+                          >
+                            {s.activeEquipment ?? s._count?.equipment ?? 0} معدة
                           </span>
                         </>
                       )}

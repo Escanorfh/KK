@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
-import { Save, Loader2, Plus, FilePlus2, Pencil, Search } from "lucide-react";
+import { Save, Loader2, Plus, FilePlus2, Copy, Search, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn, todayLocal, toNumberOrNull, formatDate, CONDITION_LABELS, TRACKING_MODE_LABELS, trackingModeAppliesHours } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
 import { isQueued } from "@/lib/offline/queue";
 import { lookupEquipment, createEquipment, getLastMeter, type LastMeter } from "@/services/equipments";
-import { saveDailyLog, listDailyLogs, productivityTypes } from "@/services/dailylogs";
+import { saveDailyLog, listDailyLogs, listAllDailyLogs, productivityTypes } from "@/services/dailylogs";
 import { projectOptions } from "@/services/projects";
 import type { DailyLog, Equipment, Project, TrackingMode } from "@/types";
 
@@ -66,10 +66,13 @@ export default function DayPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [records, setRecords] = useState<DailyLog[]>([]);
+  const [recordedToday, setRecordedToday] = useState<Set<number>>(new Set());
+  const [recordsDate, setRecordsDate] = useState<string | null>(null);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [projects, setProjects] = useState<Pick<Project, "id" | "name">[]>([]);
+  const [projectFilter, setProjectFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [newEqName, setNewEqName] = useState("");
   const [newEqProject, setNewEqProject] = useState("");
@@ -82,21 +85,42 @@ export default function DayPage() {
   const setField = (key: keyof FormState, value: string | number | null) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  // اليوم المختار بيكون لسه ما اتسجلش فيه — النافع للسراجي هو آخر يوم مسجّل قبله
   const loadRecords = useCallback(async () => {
     setRecordsLoading(true);
+    const projectId = projectFilter ? Number(projectFilter) : undefined;
     try {
-      const res = await listDailyLogs({ date, pageSize: 100 });
+      const [probe, today] = await Promise.all([
+        listDailyLogs({ dateTo: dayBefore(date), projectId, pageSize: 1 }),
+        listAllDailyLogs({ dateFrom: date, dateTo: date, projectId }),
+      ]);
+      setRecordedToday(new Set(today.data.map((r) => r.equipmentId)));
+      const prevDay = probe.data[0]?.date.slice(0, 10) ?? null;
+      setRecordsDate(prevDay);
+      if (!prevDay) {
+        setRecords([]);
+        return;
+      }
+      const res = await listAllDailyLogs({ dateFrom: prevDay, dateTo: prevDay, projectId });
       setRecords(res.data);
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
       setRecordsLoading(false);
     }
-  }, [date]);
+  }, [date, projectFilter]);
 
   useEffect(() => {
     loadRecords();
   }, [loadRecords]);
+
+  /** معدات اليوم اللي قبله اللي لسه ما اتسجلتش النهارده — دي اللي بتفضل في الجدول وبيعملها التنبيه */
+  const pending = useMemo(
+    () => records.filter((r) => !recordedToday.has(r.equipmentId)),
+    [records, recordedToday]
+  );
+
+  const prevDayLabel = recordsDate ? formatDate(recordsDate) : "—";
 
   useEffect(() => {
     projectOptions()
@@ -328,6 +352,30 @@ export default function DayPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /** نسخ بيانات معدة من اليوم اللي قبله في فورم اليوم الجديد — بدون id عشان الحفظ يسجّل جديد مش يعدّل */
+  const copyRecordToNewDay = (rec: DailyLog) => {
+    setForm({
+      id: null,
+      equipmentId: rec.equipmentId,
+      code: rec.equipment.code,
+      equipmentName: rec.equipment.name,
+      projectName: rec.equipment.project?.name || "",
+      sectorName: rec.equipment.sector?.name || "",
+      trackingMode: rec.equipment.trackingMode,
+      endMeter: rec.endMeter != null ? String(rec.endMeter) : "",
+      operatingHours: rec.operatingHours != null ? String(rec.operatingHours) : "",
+      diesel: rec.diesel != null ? String(rec.diesel) : "",
+      productivityType: rec.productivityType || "",
+      productivityCount: rec.productivityCount != null ? String(rec.productivityCount) : "",
+      condition: rec.condition || "",
+      notes: rec.notes || "",
+    });
+    setFieldErrors({});
+    setShowSuggestions(false);
+    toast(`تم نسخ بيانات ${rec.equipment.code} — عدّل القراءة الجديدة واحفظها لليوم ${formatDate(date)}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const handleCreateEquipment = async () => {
     if (!newEqName.trim()) {
       toast.error("اكتب اسم المعدة");
@@ -364,10 +412,29 @@ export default function DayPage() {
         </div>
         <div className="flex items-center gap-2">
           <div className="bg-white border border-slate-300 rounded-lg px-3 py-2 flex items-center gap-2">
+            <label className="text-[13px] font-semibold text-slate-600" htmlFor="day-project-filter">
+              المشروع
+            </label>
+            <select
+              id="day-project-filter"
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="text-sm outline-none bg-transparent max-w-[170px]"
+            >
+              <option value="">كل المشاريع</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="bg-white border border-slate-300 rounded-lg px-3 py-2 flex items-center gap-2">
             <label className="text-[13px] font-semibold text-slate-600">التاريخ</label>
             <input
               type="date"
               value={date}
+              max={todayLocal()}
               onChange={(e) => {
                 setDate(e.target.value);
                 resetForm();
@@ -686,24 +753,54 @@ export default function DayPage() {
         </form>
 
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
-          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-700">سجلات هذا اليوم</h2>
-            <span className="text-xs text-slate-400">{formatDate(date)}</span>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-slate-700">بيانات معدات اليوم اللي قبله</h2>
+            <span className="text-xs text-slate-400">
+              {recordsDate ? formatDate(recordsDate) : "—"}
+            </span>
           </div>
+
+          {!recordsLoading && pending.length > 0 && (
+            <div className="mx-4 mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900 flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+              <span>
+                <b>{pending.length}</b> معدة لم تُسجَّل في{" "}
+                <b>{formatDate(date)}</b> — آخر قراءة لها مسجلة في {prevDayLabel}:{" "}
+                <span dir="ltr" className="font-mono">
+                  {pending
+                    .slice(0, 8)
+                    .map((r) => r.equipment.code)
+                    .join("، ")}
+                  {pending.length > 8 ? " …" : ""}
+                </span>
+              </span>
+            </div>
+          )}
+
+          {!recordsLoading && records.length > 0 && pending.length === 0 && (
+            <div className="mx-4 mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-[13px] font-semibold text-emerald-800 flex items-center gap-2">
+              <CheckCircle2 size={16} className="shrink-0" />
+              كل معدات {prevDayLabel} تم تسجيلها في {formatDate(date)}
+            </div>
+          )}
 
           <div className="max-h-[540px] overflow-y-auto">
             {recordsLoading ? (
               <div className="p-6 text-center text-slate-400 text-sm">جاري التحميل...</div>
             ) : records.length === 0 ? (
               <div className="p-6 text-center text-slate-400 text-sm">
-                لا توجد سجلات في هذا التاريخ
+                لا توجد سجلات مسجلة قبل هذا التاريخ
+              </div>
+            ) : pending.length === 0 ? (
+              <div className="p-6 text-center text-slate-400 text-sm">
+                لا توجد معدات متبقّية — كل ما تسجّل بالأمس اتسجّل النهارده
               </div>
             ) : (
-              records.map((rec) => (
+              pending.map((rec) => (
                 <button
                   key={rec.id}
                   type="button"
-                  onClick={() => editRecord(rec)}
+                  onClick={() => copyRecordToNewDay(rec)}
                   className="w-full text-right px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-primary-50 transition-colors group"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -738,7 +835,7 @@ export default function DayPage() {
                         )}
                       </div>
                     </div>
-                    <Pencil
+                    <Copy
                       size={14}
                       className="text-slate-300 group-hover:text-primary-600 shrink-0"
                     />
@@ -749,7 +846,15 @@ export default function DayPage() {
           </div>
 
           <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 rounded-b-xl">
-            عدد السجلات: <b>{records.length}</b> — اضغط على أي سجل لتعديله
+            {recordsLoading ? (
+              "جاري الحساب..."
+            ) : (
+              <>
+                مسجّل اليوم <b className="text-emerald-700">{records.length - pending.length}</b> — متبقّي{" "}
+                <b className="text-amber-700">{pending.length}</b> من {records.length} — اضغط على أي معدة لنسخ
+                بياناتها إلى اليوم الحالي وتسجيلها من جديد
+              </>
+            )}
           </div>
         </div>
       </div>

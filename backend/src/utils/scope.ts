@@ -12,3 +12,12 @@ export async function scopeProjectIds(user: {
   });
   return rows.map((r) => r.projectId);
 }
+
+type ProjectFilter = { projectId: { in: number[] } } | { projectId: null };
+
+// السجلات بلا إسناد مشروع ملك المستخدم في الميدان عمليًا، فاستبعادها يخلي شاشته ناقصة
+/** null = بلا تضييق (أدمن/root). الأعمدة اللي projectId إلزامي فيها (Sector/Project) تفضل `in: scope` بس. */
+export function scopeOr(scope?: number[] | null): ProjectFilter[] | null {
+  if (!scope) return null;
+  return [{ projectId: { in: scope } }, { projectId: null }];
+}
