@@ -18,6 +18,7 @@ import needRequestRoutes from "./modules/need-requests/needRequest.routes";
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import dataRoutes from "./modules/data/data.routes";
 import cronRoutes from "./modules/cron/cron.routes";
+import prisma from "./config/prisma";
 import { isDbConnectionError } from "./utils/db";
 
 const app = express();
@@ -42,6 +43,19 @@ app.use("/api", (_req, res, next) => {
 });
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+
+// فحص قاعدة البيانات منفصل عن فحص السيرفر: Neon النائم بياخد ثواني عشان يصحى
+// اللوج الكامل في سجل المنصة بس — الرد العام مفيهوش عنوان اتصال ولا كلمة سر
+app.get("/api/health/db", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ db: "ok" });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    console.error("health/db:", code, err instanceof Error ? err.message : err);
+    res.status(503).json({ db: "error", code: code || "UNKNOWN" });
+  }
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
