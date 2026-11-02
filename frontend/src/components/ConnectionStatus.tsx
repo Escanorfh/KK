@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { CloudOff, Cloud, RefreshCw, Wifi, X, Trash2, Settings2 } from "lucide-react";
+import { CloudOff, Cloud, RefreshCw, Wifi, X, Trash2, Settings2, Server, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRoot, getServerUrl, setServerUrl } from "@/lib/serverUrl";
 import { kvLatestAt, type OutboxItem } from "@/lib/offline/db";
@@ -25,6 +25,34 @@ function fmtWhen(ts: number): string {
   return new Date(ts).toLocaleString("ar-EG", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
 }
 
+function StatusRow({ ok, label, path, Icon }: { ok: boolean | null; label: string; path: string; Icon: typeof Wifi }) {
+  return (
+    <div className="flex items-center gap-2 text-xs font-semibold">
+      <Icon size={14} className={ok ? "text-emerald-600" : "text-red-600"} />
+      <span className={ok ? "text-emerald-700" : "text-red-700"}>
+        {label} — {ok ? "سليم" : "فشل"}
+      </span>
+      <span className="text-[10px] text-slate-400 font-mono" dir="ltr">{path}</span>
+    </div>
+  );
+}
+
+// Wasmer بيقطع الاتصال أحيانًا من غير رد، والمنصة بتصحى من النوم في ثواني — فمهلة 15 ثانية وإعادة محاولة واحدة
+async function probeEndpoint(base: string, path: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(15000) });
+      if (res.ok) return true;
+      // 503 من /api/health/db معناه السيرفر شغال والقاعدة واقعة — يستاهل المحاولة التانية
+      if (res.status !== 503) return false;
+    } catch {
+      // انقطاع أو انتهاء المهلة
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  return false;
+}
+
 export default function ConnectionStatus() {
   const online = useOnline();
   const [items, setItems] = useState<OutboxItem[]>([]);
@@ -32,36 +60,37 @@ export default function ConnectionStatus() {
   const [url, setUrl] = useState(getServerUrl());
   const [testing, setTesting] = useState(false);
   const [lastCache, setLastCache] = useState<number | null>(null);
+  const [checks, setChecks] = useState<{ server: boolean | null; db: boolean | null }>({ server: null, db: null });
 
   useEffect(() => subscribeOutbox(setItems), []);
 
   const pending = items.length;
   const failed = items.filter((i) => i.error).length;
 
+  const testConnection = useCallback(async (nextUrl: string) => {
+    setTesting(true);
+    const base = nextUrl.replace(/\/+$/, "");
+    const server = await probeEndpoint(base, "/api/health");
+    const db = server ? await probeEndpoint(base, "/api/health/db") : null;
+    setChecks({ server, db });
+    setTesting(false);
+    if (!server) toast.error("لا يمكن الوصول للسيرفر — تأكد من العنوان والمنفذ");
+    else if (!db) toast("السيرفر يرد لكن قاعدة البيانات لا تتصل", { icon: "⚠️" });
+    else toast.success("الاتصال بالسيرفر وقاعدة البيانات سليم");
+    return { server, db };
+  }, []);
+
   const openModal = useCallback(() => {
     setOpen(true);
     setUrl(getServerUrl());
     void kvLatestAt().then(setLastCache);
-  }, []);
-
-  const testConnection = async (nextUrl: string) => {
-    setTesting(true);
-    try {
-      const res = await fetch(`${nextUrl.replace(/\/+$/, "")}/api/health`, { signal: AbortSignal.timeout(6000) });
-      if (!res.ok) throw new Error(String(res.status));
-      toast.success("الاتصال بالسيرفر سليم");
-      return true;
-    } catch {
-      toast.error("لا يمكن الوصول لهذا العنوان — تأكد من السيرفر والمنفذ");
-      return false;
-    } finally {
-      setTesting(false);
-    }
-  };
+    void testConnection(getServerUrl());
+  }, [testConnection]);
 
   const saveUrl = async () => {
     const clean = url.trim();
-    if (clean && !(await testConnection(clean))) return;
+    // العنوان يتحفظ لو السيرفر برد: القاعدة النايمة أو المتعطلة مش سبب يمنع الضبط
+    if (clean && !(await testConnection(clean)).server) return;
     setServerUrl(clean);
     toast.success(clean ? "تم ضبط عنوان السيرفر" : "سيُستخدم نفس العنوان الحالي للتطبيق");
     await flushOutbox();
@@ -132,6 +161,27 @@ export default function ConnectionStatus() {
                 <p className="text-[11px] text-slate-500 mt-1.5">
                   العنوان الحالي للطلبات: <b className="font-mono" dir="ltr">{apiRoot()}/api</b>
                 </p>
+
+                {testing ? (
+                  <p className="text-[11px] text-slate-500 mt-2">جارٍ الفحص (حتى 15 ثانية لكل نقطة)...</p>
+                ) : (
+                  checks.server !== null && (
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <StatusRow ok={checks.server} label="الاتصال بالسيرفر" path="/api/health" Icon={Server} />
+                      {checks.db !== null ? (
+                        <StatusRow ok={checks.db} label="الاتصال بقاعدة البيانات" path="/api/health/db" Icon={Database} />
+                      ) : (
+                        <p className="text-[11px] text-slate-500">لم يُفحص اتصال القاعدة لأن السيرفر لا يرد.</p>
+                      )}
+                      <button
+                        onClick={() => void testConnection(url.trim() || getServerUrl())}
+                        className="text-[11px] font-bold text-primary-700 hover:bg-primary-50 rounded px-2 py-1"
+                      >
+                        إعادة الفحص
+                      </button>
+                    </div>
+                  )
+                )}
               </div>
 
               <div className="border-t border-slate-200 pt-3">
