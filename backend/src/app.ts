@@ -19,6 +19,10 @@ import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import dataRoutes from "./modules/data/data.routes";
 import cronRoutes from "./modules/cron/cron.routes";
 import prisma from "./config/prisma";
+import { Prisma } from "@prisma/client";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { isDbConnectionError } from "./utils/db";
 
 const app = express();
@@ -46,6 +50,51 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
 // فحص قاعدة البيانات منفصل عن فحص السيرفر: Neon النائم بياخد ثواني عشان يصحى
 // اللوج الكامل في سجل المنصة بس — الرد العام مفيهوش عنوان اتصال ولا كلمة سر
+
+// Wasmer ما بيديناش سطر اللوج الموسّع، فالـ presence بس هو التشخيص: المتغيّرات اتشالت ولا لأ،
+// وأسماء/أحجام ملفات الـ engine الموجودة فعلًا في صورة التشغيل. مفيش أي قيمة سرية في الرد.
+function engineFiles(dir: string): { name: string; bytes: number }[] {
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => /engine/i.test(name) && !/\.tmp\d+$/.test(name))
+    .slice(0, 10)
+    .map((name) => {
+      try {
+        return { name, bytes: statSync(path.join(dir, name)).size };
+      } catch {
+        return { name, bytes: -1 };
+      }
+    });
+}
+
+function runtimeProbe() {
+  const root = process.cwd();
+  const generated = path.join(root, "node_modules", ".prisma", "client");
+  const packaged = path.join(root, "node_modules", "@prisma", "engines");
+  let version = "unknown";
+  try {
+    version = Prisma.prismaVersion.client;
+  } catch {
+    /* client غير مولّد */
+  }
+  return {
+    env: {
+      DATABASE_URL: Boolean(process.env.DATABASE_URL),
+      DIRECT_URL: Boolean(process.env.DIRECT_URL),
+      PRISMA_QUERY_ENGINE_LIBRARY: Boolean(process.env.PRISMA_QUERY_ENGINE_LIBRARY),
+    },
+    runtime: { platform: os.platform(), arch: os.arch(), node: process.version },
+    prismaClient: version,
+    generatedClient: { exists: existsSync(generated), engines: engineFiles(generated) },
+    packagedEngines: { exists: existsSync(packaged), engines: engineFiles(packaged) },
+  };
+}
+
 app.get("/api/health/db", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -54,11 +103,17 @@ app.get("/api/health/db", async (_req, res) => {
     const e = err as { code?: string; errorCode?: string };
     const message = err instanceof Error ? err.message : String(err);
     console.error("health/db:", e.code || e.errorCode || "-", message);
-    // أخطاء تهيئة Prisma 5.22 ما بتحطش كود في code ولا errorCode — الفارق الوحيد هو نص الرسالة
-    const body: { db: "error"; code: string; errorType: string; detail?: string } = {
+    const body: {
+      db: "error";
+      code: string;
+      errorType: string;
+      probe?: ReturnType<typeof runtimeProbe>;
+      detail?: string;
+    } = {
       db: "error",
       code: e.code || e.errorCode || "SEE_LOG",
       errorType: err instanceof Error ? err.constructor.name : "unknown",
+      probe: runtimeProbe(),
     };
     // HEALTH_DEBUG=1 يكشف النص من المتصفح بدل سجل المنصة، بعد حجب أي "مستخدم:كلمة_سر@" أو password=
     if (process.env.HEALTH_DEBUG === "1") {
