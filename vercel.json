@@ -1,13 +1,39 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm ci",
-  "buildCommand": "npm run build:deploy",
-  "devCommand": "npm run dev",
-  "functions": {
-    "api/**": {
-      "maxDuration": 60
+  "services": {
+    "backend": {
+      "root": "backend",
+      "framework": "express",
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build:deploy",
+      "functions": {
+        "api/**": {
+          "maxDuration": 60
+        }
+      }
+    },
+    "frontend": {
+      "root": "frontend",
+      "framework": "vite",
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "outputDirectory": "dist"
     }
   },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/projects-sync",
