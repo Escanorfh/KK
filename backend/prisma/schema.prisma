@@ -9,7 +9,9 @@ datasource db {
   provider  = "postgresql"
   schemas   = ["core", "ops", "log"]
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  // كان env("DIRECT_URL") — قيمة DIRECT_URL على المنصة Placeholder، وPrisma بيفشل وقت الـ client init
+  // قبل ما يوصل لـ url. القاعدة اتنقلت لـ Postgres الخاص بـ Wasmer: اتصال واحد يكفي.
+  directUrl = env("DATABASE_URL")
 }
 
 enum Role {
