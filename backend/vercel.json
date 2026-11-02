@@ -2,9 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm ci",
   "buildCommand": "npm run build:deploy",
+  "devCommand": "npm run dev",
   "functions": {
-    "src/server.ts": {
-      "maxDuration": 60
+    "api/[...path].ts": {
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "crons": [
