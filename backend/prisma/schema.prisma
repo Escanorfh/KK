@@ -1,6 +1,8 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["multiSchema"]
+  // Vercel يطلب debian-openssl-3.0.x وWasmer تطلب 1.1.x — بدونه «could not locate the Query Engine»
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
