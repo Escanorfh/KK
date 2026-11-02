@@ -29,6 +29,8 @@ ALADABIA.xlsm
 # تصدير قاعدة البيانات — فيه بيانات حقيقية وهاشطات كلمات سر المستخدمين
 backup.sql
 users.sql
+import.sql
+import_data.sql
 *.dump
 
 # سجلات وملفات النظام

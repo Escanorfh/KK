@@ -51,9 +51,15 @@ app.get("/api/health/db", async (_req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ db: "ok" });
   } catch (err) {
-    const code = (err as { code?: string }).code;
-    console.error("health/db:", code, err instanceof Error ? err.message : err);
-    res.status(503).json({ db: "error", code: code || "UNKNOWN" });
+    const e = err as { code?: string; error_code?: string };
+    console.error("health/db:", e.code, err instanceof Error ? err.message : err);
+    // PrismaClientInitializationError بيحمل الكود في error_code مش code — ومن غيره الرد بيفضل UNKNOWN
+    // الرسالة الكاملة فيها عنوان الاتصال، فبتفضل في اللوج بس والرد فيه الكود ونوع الخطأ فقط
+    res.status(503).json({
+      db: "error",
+      code: e.code || e.error_code || "UNKNOWN",
+      errorType: err instanceof Error ? err.constructor.name : "unknown",
+    });
   }
 });
 
