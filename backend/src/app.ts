@@ -51,15 +51,24 @@ app.get("/api/health/db", async (_req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ db: "ok" });
   } catch (err) {
-    const e = err as { code?: string; error_code?: string };
-    console.error("health/db:", e.code, err instanceof Error ? err.message : err);
-    // PrismaClientInitializationError بيحمل الكود في error_code مش code — ومن غيره الرد بيفضل UNKNOWN
-    // الرسالة الكاملة فيها عنوان الاتصال، فبتفضل في اللوج بس والرد فيه الكود ونوع الخطأ فقط
-    res.status(503).json({
+    const e = err as { code?: string; errorCode?: string };
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("health/db:", e.code || e.errorCode || "-", message);
+    // أخطاء تهيئة Prisma 5.22 ما بتحطش كود في code ولا errorCode — الفارق الوحيد هو نص الرسالة
+    const body: { db: "error"; code: string; errorType: string; detail?: string } = {
       db: "error",
-      code: e.code || e.error_code || "UNKNOWN",
+      code: e.code || e.errorCode || "SEE_LOG",
       errorType: err instanceof Error ? err.constructor.name : "unknown",
-    });
+    };
+    // HEALTH_DEBUG=1 يكشف النص من المتصفح بدل سجل المنصة، بعد حجب أي "مستخدم:كلمة_سر@" أو password=
+    if (process.env.HEALTH_DEBUG === "1") {
+      body.detail = message
+        .replace(/([a-z]+:\/\/)[^\s@"']+@/gi, "$1***@")
+        .replace(/password=[^\s&"']+/gi, "password=***")
+        .replace(/\s+/g, " ")
+        .slice(0, 400);
+    }
+    res.status(503).json(body);
   }
 });
 
