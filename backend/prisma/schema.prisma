@@ -1,10 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  schemas   = ["core", "ops", "log"]
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -12,11 +15,13 @@ enum Role {
   ADMIN
   MANAGER
   USER
+  @@schema("core")
 }
 
 enum WorkType {
   MAINTENANCE
   REPAIR
+  @@schema("core")
 }
 
 enum WorkStatus {
@@ -24,6 +29,7 @@ enum WorkStatus {
   IN_PROGRESS
   DONE
   WAITING_PARTS
+  @@schema("core")
 }
 
 enum RepairOrderStatus {
@@ -33,24 +39,28 @@ enum RepairOrderStatus {
   REPAIRED
   LOADED
   RETURNED
+  @@schema("core")
 }
 
 enum Condition {
   GOOD
   BROKEN
   STOPPED
+  @@schema("core")
 }
 
 enum TrackingMode {
   HOURS
   KM
   BOTH
+  @@schema("core")
 }
 
 enum NeedRequestStatus {
   DRAFT
   SENT
   FAILED
+  @@schema("core")
 }
 
 model User {
@@ -71,6 +81,7 @@ model User {
   needRequestsCreated NeedRequest[]
   projects            UserProject[]
   oilConsumptions     OilConsumption[]
+  @@schema("core")
 }
 
 model Project {
@@ -87,6 +98,7 @@ model Project {
   repairOrders RepairOrder[]
   needRequests NeedRequest[]
   users        UserProject[]
+  @@schema("core")
 }
 
 model UserProject {
@@ -97,6 +109,7 @@ model UserProject {
   createdAt DateTime @default(now())
 
   @@id([userId, projectId])
+  @@schema("core")
 }
 
 model Sector {
@@ -110,6 +123,7 @@ model Sector {
   repairOrders RepairOrder[]
 
   @@unique([projectId, name])
+  @@schema("core")
 }
 
 model EquipmentCategory {
@@ -121,6 +135,7 @@ model EquipmentCategory {
   updatedAt           DateTime     @updatedAt
 
   equipment Equipment[]
+  @@schema("core")
 }
 
 model Equipment {
@@ -149,6 +164,7 @@ model Equipment {
   faults        Fault[]
   repairOrders  RepairOrder[]
   oilConsumptions OilConsumption[]
+  @@schema("core")
 }
 
 model MeterReset {
@@ -162,6 +178,7 @@ model MeterReset {
   createdAt   DateTime  @default(now())
 
   @@index([equipmentId, date])
+  @@schema("ops")
 }
 
 model RepairOrder {
@@ -211,6 +228,7 @@ model RepairOrder {
   createdBy              User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
+  @@schema("ops")
 }
 
 model RepairPart {
@@ -222,6 +240,7 @@ model RepairPart {
   qty           Float?
   notes         String?
   createdAt     DateTime    @default(now())
+  @@schema("ops")
 }
 
 model RepairOrderEvent {
@@ -233,6 +252,7 @@ model RepairOrderEvent {
   user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   note          String?
   createdAt     DateTime          @default(now())
+  @@schema("ops")
 }
 
 model NeedRequest {
@@ -254,6 +274,7 @@ model NeedRequest {
   createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  @@schema("ops")
 }
 
 model NeedRequestItem {
@@ -271,6 +292,7 @@ model NeedRequestItem {
   foreignSupply  Float?
   notes          String?
   createdAt      DateTime    @default(now())
+  @@schema("ops")
 }
 
 model DailyLog {
@@ -296,6 +318,7 @@ model DailyLog {
   updatedAt         DateTime   @updatedAt
 
   @@unique([date, equipmentId])
+  @@schema("ops")
 }
 
 model Maintenance {
@@ -323,6 +346,7 @@ model Maintenance {
   oilConsumptions OilConsumption[]
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  @@schema("ops")
 }
 
 model WorkPart {
@@ -334,6 +358,7 @@ model WorkPart {
   qty           Float?
   notes         String?
   createdAt     DateTime    @default(now())
+  @@schema("ops")
 }
 
 /// أنواع الزيوت المستخدمة في المعدات
@@ -343,12 +368,14 @@ enum OilType {
   STEERING
   GEARBOX
   OTHER
+  @@schema("core")
 }
 
 /// مصدر قيد الاستهلاك: يدوي أو مستورد من أمر صيانة
 enum OilSource {
   MANUAL
   MAINTENANCE
+  @@schema("core")
 }
 
 /// قيد استهلاك زيت — إما إدخال يدوي أو مستورد تلقائيًا من صيانة (WorkPart فيها اسم زيت)
@@ -379,6 +406,7 @@ model OilConsumption {
   @@index([equipmentId, date])
   @@index([oilType])
   @@index([source])
+  @@schema("ops")
 }
 
 model OilSchedule {
@@ -395,6 +423,7 @@ model OilSchedule {
   updatedAt          DateTime  @updatedAt
 
   @@unique([equipmentId, oilType])
+  @@schema("ops")
 }
 
 model PartSchedule {
@@ -409,6 +438,7 @@ model PartSchedule {
   updatedAt   DateTime  @updatedAt
 
   @@unique([equipmentId, partName])
+  @@schema("ops")
 }
 
 model Fault {
@@ -428,6 +458,7 @@ model Fault {
   status        WorkStatus @default(NEW)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
+  @@schema("ops")
 }
 
 model AuditLog {
@@ -439,6 +470,7 @@ model AuditLog {
   action    String
   details   Json?
   createdAt DateTime @default(now())
+  @@schema("log")
 }
 
 /// سجل استيراد شيتات الإكسل — يتيح حذف بيانات شيت بعينه لاحقًا
@@ -455,4 +487,5 @@ model ImportLog {
   createdAt DateTime @default(now())
 
   @@index([entity])
+  @@schema("log")
 }

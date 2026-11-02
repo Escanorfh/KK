@@ -26,6 +26,11 @@ ALADABIA.xlsm
 *.xlsx
 *.xls
 
+# تصدير قاعدة البيانات — فيه بيانات حقيقية وهاشطات كلمات سر المستخدمين
+backup.sql
+users.sql
+*.dump
+
 # سجلات وملفات النظام
 *.log
 npm-debug.log*
