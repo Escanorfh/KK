@@ -5,11 +5,10 @@
       "root": "backend",
       "framework": "express",
       "installCommand": "npm ci",
-      "buildCommand": "npm run build:deploy",
       "functions": {
-        "api/**": {
+        "src/app.ts": {
           "maxDuration": 60,
-          "includeFiles": "node_modules/.prisma/client/**"
+          "includeFiles": "backend/node_modules/.prisma/client/**"
         }
       }
     },

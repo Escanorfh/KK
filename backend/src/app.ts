@@ -1,3 +1,4 @@
+import "./config/resolve-modules";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
