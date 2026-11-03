@@ -1,8 +1,10 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["multiSchema"]
-  // Vercel يطلب debian-openssl-3.0.x وWasmer تطلب 1.1.x — بدونه «could not locate the Query Engine»
-  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+  // Vercel بيبني على Debian (1.1) لكن الـFunction بتشتغل على Amazon Linux 2023 (rhel-openssl-3.0.x)
+  // — من غير الهدف ده الـclient بيتولّد لـdebian وبيفشل وقت التشغيل: «could not locate the Query Engine».
+  // Wasmer لسه محتاجة debian-openssl-1.1.x.
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

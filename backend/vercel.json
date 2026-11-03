@@ -5,7 +5,8 @@
   "devCommand": "npm run dev",
   "functions": {
     "api/**": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": ["node_modules/.prisma/client/**"]
     }
   },
   "crons": [
