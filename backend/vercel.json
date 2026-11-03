@@ -6,7 +6,7 @@
   "functions": {
     "api/**": {
       "maxDuration": 60,
-      "includeFiles": ["node_modules/.prisma/client/**"]
+      "includeFiles": "node_modules/.prisma/client/**"
     }
   },
   "crons": [
