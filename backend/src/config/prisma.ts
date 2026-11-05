@@ -1,11 +1,40 @@
 import { PrismaClient } from "@prisma/client";
+import { EFMS_MODE, assertWebDatasourceConfigured, desktopSqliteUrl, isDesktopMode } from "./runtimeMode";
+import { withDesktopCompat } from "./desktopCompat";
 
 // Serverless بيجمّد الوحدة ويعيد استخدامها بين الطلبات: كل `new PrismaClient()` جديد
 // بيفتح مجموعة اتصالات على القاعدة، وسقف الاتصالات هناك صغير — فالكلاينت بيتخزين مرة واحدة.
 const cached = globalThis as unknown as { prisma?: PrismaClient };
 
+// عميل Desktop بيتحمّل وقت التشغيل فقط: استيراد ثابت كان هيخلّي `npm run build`
+// على Vercel يفشل لو عميل SQLite ما اتولّدتش (npm ci + postinstall بيولّد الإنتاجي بس)
+function createDesktopClient(): PrismaClient {
+  let mod: { PrismaClient: new (options: Record<string, unknown>) => unknown };
+  try {
+    mod = require("@efms/desktop-prisma") as {
+      PrismaClient: new (options: Record<string, unknown>) => unknown;
+    };
+  } catch {
+    throw new Error(
+      'عميل SQLite غير موجود — شغّل «npm run desktop:generate» قبل الإقلاع بوضع EFMS_MODE=desktop'
+    );
+  }
+  const client = new mod.PrismaClient({
+    datasources: { db: { url: desktopSqliteUrl() } },
+    log: ["warn", "error"],
+  });
+  return withDesktopCompat(client as object) as PrismaClient;
+}
+
+// المصدر الوحيد لاختيار العميل: EFMS_MODE — مافيش استنتاج من اسم المضيف ولا fallback
+function createClient(): PrismaClient {
+  if (isDesktopMode()) return createDesktopClient();
+  assertWebDatasourceConfigured();
+  return new PrismaClient();
+}
+
 function getClient(): PrismaClient {
-  return (cached.prisma ??= new PrismaClient());
+  return (cached.prisma ??= createClient());
 }
 
 // الإنشاء بيتأجل لأول استخدام فعلًا: لو الـquery engine مش موجود على المنصة،
@@ -20,4 +49,5 @@ export const prisma = new Proxy({} as PrismaClient, {
   },
 });
 
+export { EFMS_MODE };
 export default prisma;

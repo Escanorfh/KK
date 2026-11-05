@@ -1,0 +1,427 @@
+// EFMS — نسخة Desktop Offline (SQLite)
+// schema مستقل تمامًا عن prisma/schema.prisma الإنتاجي: ملفان، مولّدان، عميلان.
+// لا يُستورد هذا العميل statically في أي ملف داخل src/ — اتقراه ديناميكيًا من src/config/prisma.ts فقط
+// (استيراد ثابت = `npm run build` على Vercel هيفشل لو عميل Desktop ما اتولّدتش).
+// التوليد: npm run desktop:generate   |   التحقق: npm run desktop:validate
+
+generator desktopClient {
+  provider = "prisma-client-js"
+  // برة src/ وبرة مسار العميل الإنتاجي: مستحيل يكتب فوق node_modules/.prisma/client
+  output = "../node_modules/@efms/desktop-prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  // مسار تطوير فقط؛ مسار التشغيل الحقيقي (userData) بيتحقن من EFMS_SQLITE_DIR وقت الإقلاع
+  url = "file:./desktop.db"
+}
+
+// Prisma ما بيعبرش عن COLLATE NOCASE في الـ schema، وهو المطلوب لتعويض `mode: "insensitive"`
+// (مقيس في Preflight: بـ NOCASE على العمود، `equals` بيلاقّي "generator truck" = "Generator Truck"
+// زي LOWER() بتاع PostgreSQL تمامًا، والعربي بيطابق حرفيًا زي ما هو في الحالتين).
+// النتيجة: قاعدة Desktop لازم تتبنى من DDL مضبوط (migrate diff + COLLATE NOCASE)، مش من `prisma db push`
+// — لأن db push بيعيد بناء الجداول من غير_COLLATE ويسقط التعويض. ده شغل TASK 02.
+
+// كل enum في النسخة الإنتاجية بقى String بنفس القيم الحرفية بالظبط — SQLite ما بيدعمش enums
+// (مقاس: «the current connector does not support enums»). القيم المشتركة دي هي اللي بتخلّي
+// الأنواع المولّدة من العميل الإنتاجي صالحة للمقارنة في الوضعين.
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("USER")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dailyLogs           DailyLog[]
+  maintenance         Maintenance[]
+  auditLogs           AuditLog[]
+  repairOrdersCreated RepairOrder[]
+  repairOrderEvents   RepairOrderEvent[]
+  needRequestsCreated NeedRequest[]
+  projects            UserProject[]
+  oilConsumptions     OilConsumption[]
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  code        String?  @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sectors      Sector[]
+  equipment    Equipment[]
+  faults       Fault[]
+  repairOrders RepairOrder[]
+  needRequests NeedRequest[]
+  users        UserProject[]
+}
+
+model UserProject {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId Int
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, projectId])
+}
+
+model Sector {
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  managersRoomId    Int?
+  managersRoomTitle String?
+
+  equipment    Equipment[]
+  faults       Fault[]
+  repairOrders RepairOrder[]
+  needRequests NeedRequest[]
+
+  @@unique([projectId, name])
+}
+
+// codePrefixes: SQLite ما بيدعمش قوائم (`can't be a list`) — بقت نص JSON "[]".
+// الطبقة اللي بتقرا وتكتب لازم تعمل JSON.stringify/parse؛ المكانان معلومان في تقرير TASK 00
+// (equipment.service.ts:668,684) وده مطلوب في TASK 02 — الحقول ما سقطتش.
+model EquipmentCategory {
+  id                  Int      @id @default(autoincrement())
+  name                String   @unique
+  codePrefixes        String   @default("[]")
+  defaultTrackingMode String   @default("BOTH")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  equipment Equipment[]
+}
+
+model Equipment {
+  id                     Int                @id @default(autoincrement())
+  code                   String             @unique
+  name                   String
+  projectId              Int?
+  sectorId               Int?
+  categoryId             Int?
+  trackingMode           String             @default("BOTH")
+  trackingModeOverridden Boolean            @default(false)
+  trackingModeConfirmed  Boolean            @default(false)
+  /// Legacy field kept only for the tracking-mode migration; do not use in new logic.
+  hasOdometer            Boolean            @default(true)
+  project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  category               EquipmentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  dailyLogs       DailyLog[]
+  maintenance     Maintenance[]
+  oilSchedules    OilSchedule[]
+  partSchedules   PartSchedule[]
+  meterResets     MeterReset[]
+  faults          Fault[]
+  repairOrders    RepairOrder[]
+  oilConsumptions OilConsumption[]
+}
+
+// @db.Date اتشالت (مقاس: «Native type Date is not supported for sqlite connector»)، والعمود
+// يفضل DateTime بنفس الدلالة؛ توحيد منتصف الليل UTC مطلوب في TASK 02.
+model MeterReset {
+  id          Int       @id @default(autoincrement())
+  equipmentId Int
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  date        DateTime
+  hours       Float?
+  km          Float?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([equipmentId, date])
+}
+
+model RepairOrder {
+  id                     Int                @id @default(autoincrement())
+  requestNo              Int                @unique
+  type                   String             @default("INTERNAL")
+  projectId              Int?
+  project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId               Int?
+  sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  equipmentId            Int
+  equipment              Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  entryDate              DateTime?
+  exitDate               DateTime?
+  hours                  Float?
+  km                     Float?
+  workshop               String?
+  faultDescription       String
+  actionTaken            String?
+  itemName               String?
+  partModel              String?
+  itemCode               String?
+  technicalCode          String?
+  quantity               Int                @default(1)
+  unit                   String             @default("عدد")
+  itemCondition          String             @default("عاطلة")
+  siteName               String?
+  requesterName          String?
+  sourceWarehouseId      Int?
+  destinationWarehouseId Int?
+  technicianPhone        String?
+  imageUrl               String?
+  imageBase64            String?
+  estimatedCost          Float?
+  actualCost             Float?
+  notes                  String?
+  status                 String             @default("PENDING")
+  sentAt                 DateTime?
+  sendError              String?
+  managersRef            String?
+  managersId             Int?               @unique
+  managersStatus         String?
+  managersSyncedAt       DateTime?
+  parts                  RepairPart[]
+  events                 RepairOrderEvent[]
+  createdById            Int?
+  createdBy              User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+}
+
+model RepairPart {
+  id            Int         @id @default(autoincrement())
+  repairOrderId Int
+  repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  qty           Float?
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model RepairOrderEvent {
+  id            Int         @id @default(autoincrement())
+  repairOrderId Int
+  repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  status        String
+  userId        Int?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  note          String?
+  createdAt     DateTime    @default(now())
+}
+
+model NeedRequest {
+  id               Int               @id @default(autoincrement())
+  requestNo        Int               @unique
+  projectId        Int?
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId         Int?
+  sector           Sector?           @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  department       String
+  requestDate      DateTime
+  status           String            @default("DRAFT")
+  sentAt           DateTime?
+  sendError        String?
+  managersRef      String?
+  managersId       Int?              @unique
+  managersStatus   String?
+  managersSyncedAt DateTime?
+  items            NeedRequestItem[]
+  createdById      Int?
+  createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model NeedRequestItem {
+  id             Int         @id @default(autoincrement())
+  needRequestId  Int
+  needRequest    NeedRequest @relation(fields: [needRequestId], references: [id], onDelete: Cascade)
+  rowNo          Int
+  itemName       String
+  itemCode       String?
+  unit           String?
+  qty            Float
+  equipmentRef   String?
+  currentBalance Float?
+  localSupply    Float?
+  foreignSupply  Float?
+  notes          String?
+  createdAt      DateTime    @default(now())
+}
+
+model DailyLog {
+  id                Int        @id @default(autoincrement())
+  date              DateTime
+  equipmentId       Int
+  equipment         Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  /// Legacy: نهاية العداد كانت تُسجَّل معها قراءة بداية — لم تعد تُدخل ولا تُعرض، والعمود باقٍ لبيانات ما قبل التعديل.
+  startMeter        Float?
+  endMeter          Float?
+  operatingHours    Float?
+  diesel            Float?
+  /// Legacy: كانت الإنتاجية نصًا حرًا (كمية + نوع في خلية واحدة)؛ استُبدلت بالنوع والعدد.
+  productivity      String?
+  productivityType  String?
+  productivityCount Float?
+  condition         String?
+  conditionNote     String?
+  notes             String?
+  userId            Int?
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([date, equipmentId])
+}
+
+model Maintenance {
+  id              Int        @id @default(autoincrement())
+  workOrderNo     Int?
+  date            DateTime
+  endDate         DateTime?
+  equipmentId     Int
+  equipment       Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  workType        String
+  orderType       String?
+  maintenanceType String?
+  workshop        String?
+  description     String?
+  action          String?
+  parts           String?
+  meterReading    Float?
+  kmMeter         Float?
+  downtime        Float?
+  status          String     @default("NEW")
+  notes           String?
+  userId          Int?
+  user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workParts       WorkPart[]
+  oilConsumptions OilConsumption[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model WorkPart {
+  id            Int         @id @default(autoincrement())
+  maintenanceId Int
+  maintenance   Maintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  qty           Float?
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model OilConsumption {
+  id            Int         @id @default(autoincrement())
+  date          DateTime
+  equipmentId   Int
+  equipment     Equipment   @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  oilType       String
+  /// اسم الزيت الحر (مثال: "shell rimula 15w40") — اختياري للتفصيل
+  oilName       String?
+  /// الكمية المستهلكة باللترات
+  liters        Float
+  /// سعر اللتر (اختياري)
+  pricePerLiter Float?
+  /// الإجمالي = liters × pricePerLiter (يُحتسب تلقائيًا)
+  totalAmount   Float?
+  source        String      @default("MANUAL")
+  /// مرجع أمر الصيانة لو القيد مستورد تلقائيًا
+  maintenanceId Int?
+  maintenance   Maintenance? @relation(fields: [maintenanceId], references: [id], onDelete: SetNull)
+  notes         String?
+  userId        Int?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([equipmentId, date])
+  @@index([oilType])
+  @@index([source])
+}
+
+model OilSchedule {
+  id                 Int       @id @default(autoincrement())
+  equipmentId        Int
+  equipment          Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  oilType            String
+  lastChangeMeter    Float
+  intervalHours      Float
+  warningBeforeHours Float     @default(10)
+  nextDueMeter       Float
+  lastServiceId      Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([equipmentId, oilType])
+}
+
+model PartSchedule {
+  id          Int       @id @default(autoincrement())
+  equipmentId Int
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  partName    String
+  interval    Float
+  unit        String    @default("ساعة")
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([equipmentId, partName])
+}
+
+model Fault {
+  id            Int        @id @default(autoincrement())
+  date          DateTime
+  projectId     Int?
+  project       Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId      Int?
+  sector        Sector?    @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  equipmentId   Int
+  equipment     Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  description   String
+  cause         String?
+  faultType     String?
+  downtimeHours Float?
+  actionTaken   String?
+  status        String     @default("NEW")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+// details/createdIds: Json غير مدعوم على SQLite (مقاس) — بقوا نص JSON، ونفس التحذير بتاع
+// codePrefixes: طبقة القراءة/الكتابة لازم تسلسل وتفك في TASK 02.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  entity    String
+  recordId  Int
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+/// سجل استيراد شيتات الإكسل — يتيح حذف بيانات شيت بعينه لاحقًا
+model ImportLog {
+  id         Int      @id @default(autoincrement())
+  entity     String
+  fileName   String
+  sheetName  String
+  created    Int      @default(0)
+  updated    Int      @default(0)
+  skipped    Int      @default(0)
+  /// معرّفات السجلات التي أنشأها هذا الاستيراد (للحذف الانتقائي)
+  createdIds String?
+  createdAt  DateTime @default(now())
+
+  @@index([entity])
+}

@@ -1,16 +1,15 @@
-import { Prisma } from "@prisma/client";
 import prisma from "../config/prisma";
 
+// الفحص بالاسم والكود مش بـ instanceof: أصناف أخطاء Prisma بتاعة العميل الإنتاجي
+// وأصناف عميل SQLite كيانات مختلفة، و`instanceof` هيرجع false صامت في وضع Desktop.
 export function isDbConnectionError(err: unknown): boolean {
-  if (err instanceof Prisma.PrismaClientInitializationError) return true;
-  if (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    ["P1001", "P1002", "P1008", "P1017"].includes(err.code)
-  ) {
+  const e = err as { name?: string; code?: string; message?: string };
+  if (e?.name === "PrismaClientInitializationError") return true;
+  if (e?.name === "PrismaClientKnownRequestError" && ["P1001", "P1002", "P1008", "P1017"].includes(e.code ?? "")) {
     return true;
   }
-  if (err instanceof Error && err.message.includes("Can't reach database server")) return true;
-  if (err instanceof Error && err.message.includes("Connection terminated")) return true;
+  if (typeof e?.message === "string" && e.message.includes("Can't reach database server")) return true;
+  if (typeof e?.message === "string" && e.message.includes("Connection terminated")) return true;
   return false;
 }
 
