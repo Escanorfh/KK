@@ -510,3 +510,16 @@ test("١٠) اسم الحقل room_id مش مشتق: buildCreatePayload بياخ
   assert.equal(payload.room_id, 77);
   assert.equal("sector_id" in payload, false, "مافيش حقل sector_id في مواصفات المدرين");
 });
+
+test("١١) توكن مرفوض (401) → الرسالة بسمّي MANAGERS_API_TOKEN ومن غير ما تطبع التوكن", async () => {
+  await startMockManagers();
+  const managers = await import("../../utils/managers.js");
+  process.env.MANAGERS_API_TOKEN = "revoked-or-expired-token";
+  const err = await managers.managersProjects(true).then(() => null, (e: unknown) => e as Error);
+  process.env.MANAGERS_API_TOKEN = TOKEN;
+
+  assert.ok(err, "لازم يترفض");
+  assert.match(err!.message, /HTTP 401/);
+  assert.match(err!.message, /MANAGERS_API_TOKEN/);
+  assert.doesNotMatch(err!.message, /revoked-or-expired-token/, "مافيش توكن في نص الخطأ");
+});

@@ -119,6 +119,18 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    // 401 معناه التوكن نفسه مرفوض عند المدرين — خطأ إعدادات مش خطأ طلب، فالرسالة
+    // بتسمّي المتغير اللي لازم يتحدّث من غير ما تطبع أي جزء من التوكن.
+    if (res.status === 401) {
+      throw new ManagersApiError(
+        `توكن نظام المدرين مرفوض (HTTP 401): ${errorText(
+          body,
+          "رمز التوكن غير صحيح أو تم تعطيله أو انتهت صلاحيته"
+        )} — يجب تحديث MANAGERS_API_TOKEN ثم إعادة تشغيل السيرفر`,
+        502,
+        res.status
+      );
+    }
     throw new ManagersApiError(
       `نظام المدرين رفض الطلب (HTTP ${res.status}): ${errorText(body, res.statusText || "خطأ غير معروف")}`,
       502,
