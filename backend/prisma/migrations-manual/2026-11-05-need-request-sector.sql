@@ -4,11 +4,12 @@
 -- SQLite (وضع Desktop) بيتولّد من prisma/desktop.prisma بنفس الحقول.
 
 -- AlterTable
-ALTER TABLE "core"."Sector" ADD COLUMN     "managersRoomId" INTEGER,
-ADD COLUMN     "managersRoomTitle" TEXT;
+ALTER TABLE "core"."Sector" ADD COLUMN IF NOT EXISTS "managersRoomId" INTEGER,
+ADD COLUMN IF NOT EXISTS "managersRoomTitle" TEXT;
 
 -- AlterTable
-ALTER TABLE "ops"."NeedRequest" ADD COLUMN     "sectorId" INTEGER;
+ALTER TABLE "ops"."NeedRequest" ADD COLUMN IF NOT EXISTS "sectorId" INTEGER;
 
--- AddForeignKey
+-- AddForeignKey (إعادة التنفيذ آمنة: بنسقط القديمة لو موجودة وبنرجّعها بنفس التعريف)
+ALTER TABLE "ops"."NeedRequest" DROP CONSTRAINT IF EXISTS "NeedRequest_sectorId_fkey";
 ALTER TABLE "ops"."NeedRequest" ADD CONSTRAINT "NeedRequest_sectorId_fkey" FOREIGN KEY ("sectorId") REFERENCES "core"."Sector"("id") ON DELETE SET NULL ON UPDATE CASCADE;
