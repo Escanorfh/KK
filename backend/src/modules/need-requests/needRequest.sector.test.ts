@@ -184,8 +184,24 @@ function recordOf(overrides: Record<string, unknown> = {}) {
 
 interface Installed {
   calls: { needUpdate: Record<string, unknown>[]; needCreate: Record<string, unknown>[]; sectorFind: unknown[] };
-  prisma: any;
   mod: typeof import("./needRequest.service.js");
+}
+
+// عميل Prisma بيقرأ الكلاينت من `globalThis.prisma` وقت التشغيل، فزرع البدائل بيحصل هناك:
+// الكتابة على الوحدة المصدّرة ما بتمرّش على الـ Proxy الكسول. delegate مزروش بيرمي خطأ
+// بدل ما يسيب الاختبار يلمس قاعدة حقيقية.
+const stubs: Record<string, unknown> = {};
+(globalThis as any).prisma = new Proxy(stubs, {
+  get(_t, prop) {
+    if (typeof prop === "symbol") return undefined;
+    if (prop in _t) return (_t as Record<string, unknown>)[prop];
+    throw new Error(`الاختبار مزروش فيه: prisma.${String(prop)}`);
+  },
+});
+
+function plant(next: Record<string, unknown>): void {
+  for (const key of Object.keys(stubs)) delete stubs[key];
+  Object.assign(stubs, { auditLog: { create: async () => null } }, next);
 }
 
 /** بديلprisma: كل.delegate محتاجه مزروع، وأي sector بيقرا من التخزين المحلي */
@@ -196,40 +212,39 @@ async function install(state: {
 }): Promise<Installed> {
   await startMockManagers();
   const mod = await import("./needRequest.service.js");
-  const prismaMod = await import("../../config/prisma.js");
   const managers = await import("../../utils/managers.js");
   // قائمة المشاريع بتتخمس دقايق — نجبرها على القراءة من mock كل اختبار
   await managers.managersProjects(true);
 
-  const p = prismaMod.default as any;
   const calls = { needUpdate: [] as Record<string, unknown>[], needCreate: [] as Record<string, unknown>[], sectorFind: [] as unknown[] };
   const record = recordOf(state.need || {});
 
-  p.needRequest = {
-    findUnique: async () => (state.need === undefined ? record : { ...record, ...state.need }),
-    update: async ({ data }: { data: Record<string, unknown> }) => {
-      calls.needUpdate.push(data);
-      return { ...record, ...data };
+  plant({
+    needRequest: {
+      findUnique: async () => (state.need === undefined ? record : { ...record, ...state.need }),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        calls.needUpdate.push(data);
+        return { ...record, ...data };
+      },
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        calls.needCreate.push(data);
+        return { ...record, ...data, id: 101 };
+      },
+      aggregate: async () => ({ _max: { requestNo: 42 } }),
+      count: async () => 0,
+      findMany: async () => [],
+      delete: async () => record,
     },
-    create: async ({ data }: { data: Record<string, unknown> }) => {
-      calls.needCreate.push(data);
-      return { ...record, ...data, id: 101 };
+    project: { findUnique: async () => state.project ?? PROJECT },
+    sector: {
+      findUnique: async ({ where }: { where: { id: number } }) => {
+        calls.sectorFind.push(where);
+        if (state.sector === undefined) return sectorOf();
+        return state.sector;
+      },
     },
-    aggregate: async () => ({ _max: { requestNo: 42 } }),
-    count: async () => 0,
-    findMany: async () => [],
-    delete: async () => record,
-  };
-  p.project = { findUnique: async () => state.project ?? PROJECT };
-  p.sector = {
-    findUnique: async ({ where }: { where: { id: number } }) => {
-      calls.sectorFind.push(where);
-      if (state.sector === undefined) return sectorOf();
-      return state.sector;
-    },
-  };
-  p.auditLog = { create: async () => null };
-  return { calls, prisma: p, mod };
+  });
+  return { calls, mod };
 }
 
 // ————— الحالات السبعة المطلوبة —————
@@ -374,10 +389,7 @@ test("٥ب) إرسال قطاع صريح مش تابع للمشروع الجدي
 test("٦) مشروع بلا قطاعات → القائمة ترجع فاضية ورسالة توضّح إن مافيش قطاع مصرّح به", async () => {
   await startMockManagers();
   const sectorMod = await import("../sectors/sector.service.js");
-  const prismaMod = await import("../../config/prisma.js");
-  const p = prismaMod.default as any;
-  p.project = { findUnique: async () => ({ id: 13, name: "مخزون الطوارئ", code: "EM" }) };
-  p.sector = { findMany: async () => [] };
+  plant({ project: { findUnique: async () => ({ id: 13, name: "مخزون الطوارئ", code: "EM" }) }, sector: { findMany: async () => [] } });
 
   const res = await sectorMod.managersRooms(13);
   assert.deepEqual(res.rooms, [], "التوكن مالوش قطاع على المشروع ده");
@@ -395,10 +407,7 @@ test("٦) مشروع بلا قطاعات → القائمة ترجع فاضية 
 test("٦ب) مشروعات بلا مطابقة عند المدرين → managersRooms بترجع تحذير بدل ما تخترع قطاعًا", async () => {
   await startMockManagers();
   const sectorMod = await import("../sectors/sector.service.js");
-  const prismaMod = await import("../../config/prisma.js");
-  (prismaMod.default as any).project = {
-    findUnique: async () => ({ id: 99, name: "مشروع مجهول تمامًا", code: "ZZ" }),
-  };
+  plant({ project: { findUnique: async () => ({ id: 99, name: "مشروع مجهول تمامًا", code: "ZZ" }) } });
   const res = await sectorMod.managersRooms(99);
   assert.equal(res.remoteProject, null);
   assert.match(res.warning!, /تعذر مطابقة مشروع/);
@@ -407,19 +416,19 @@ test("٦ب) مشروعات بلا مطابقة عند المدرين → manager
 test("٦ج) الربط اليدوي بيقبل معرّف من القائمة المصرّح بها وبيرفض أي معرّف برّاها", async () => {
   await startMockManagers();
   const sectorMod = await import("../sectors/sector.service.js");
-  const prismaMod = await import("../../config/prisma.js");
-  const p = prismaMod.default as any;
-  p.project = { findUnique: async () => PROJECT };
-  p.sector = {
-    findUnique: async () => ({
-      id: 7,
-      name: "المخازن",
-      projectId: 11,
-      managersRoomId: null,
-      project: { name: PROJECT.name },
-    }),
-    update: async ({ data }: { data: Record<string, unknown> }) => ({ id: 7, ...data }),
-  };
+  plant({
+    project: { findUnique: async () => PROJECT },
+    sector: {
+      findUnique: async () => ({
+        id: 7,
+        name: "المخازن",
+        projectId: 11,
+        managersRoomId: null,
+        project: { name: PROJECT.name },
+      }),
+      update: async ({ data }: { data: Record<string, unknown> }) => ({ id: 7, ...data }),
+    },
+  });
 
   const linked = await sectorMod.linkManagersRoom(7, 88, 1);
   assert.equal((linked as any).managersRoomId, 88);
