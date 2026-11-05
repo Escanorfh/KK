@@ -2,6 +2,11 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
+import { resolveManagersProject, type ManagersRoom } from "../../utils/managers";
+
+function fail(message: string, status = 400): never {
+  throw Object.assign(new Error(message), { status });
+}
 
 export async function list(projectId?: number, scope?: number[] | null) {
   const and: Prisma.SectorWhereInput[] = [];
@@ -76,4 +81,68 @@ export async function remove(id: number, userId: number) {
   await prisma.sector.delete({ where: { id } });
   await logAudit(userId, "Sector", id, "DELETE", { name: existing.name });
   return { message: "تم حذف القطاع" };
+}
+
+// القطاعات المصرّح بها للتوكن عند المدرين للمشروع المحلي — للمراجعة البشرية قبل الربط
+export async function managersRooms(projectId: number) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, name: true, code: true },
+  });
+  if (!project) fail("المشروع غير موجود", 404);
+
+  let remoteProject: { id: number; title: string; code: string | null } | null = null;
+  let rooms: ManagersRoom[] = [];
+  let warning: string | null = null;
+
+  try {
+    const matched = await resolveManagersProject({ name: project.name, code: project.code });
+    remoteProject = { id: matched.id, title: matched.title, code: matched.code };
+    rooms = matched.rooms;
+    if (!rooms.length) {
+      warning = `المشروع «${matched.title}» مربوط، لكن التوكن الحالي لا يملك أي قطاع مصرّح به فيه`;
+    }
+  } catch (err) {
+    warning = err instanceof Error ? err.message : String(err);
+  }
+
+  return { project, remoteProject, rooms, warning };
+}
+
+// الربط يدوي ومراجع: معرّف قطاع المدرين وبيتهخزّن من القائمة المصرّح بها، مش من تشابه الأسماء
+export async function linkManagersRoom(id: number, managersRoomId: number | null, userId: number) {
+  const sector = await prisma.sector.findUnique({
+    where: { id },
+    select: { id: true, name: true, projectId: true, project: { select: { name: true } } },
+  });
+  if (!sector) fail("القطاع غير موجود", 404);
+
+  if (managersRoomId === null) {
+    const cleared = await prisma.sector.update({
+      where: { id },
+      data: { managersRoomId: null, managersRoomTitle: null },
+    });
+    await logAudit(userId, "Sector", id, "UPDATE", { name: sector.name, unlinked: true });
+    return cleared;
+  }
+
+  const { rooms } = await managersRooms(sector.projectId);
+  const room = rooms.find((item) => item.id === managersRoomId);
+  if (!room) {
+    fail(
+      `قطاع نظام المدرين بمعرّف ${managersRoomId} ليس ضمن القطاعات المصرّح بها لمشروع «${sector.project.name}»`,
+      422
+    );
+  }
+
+  const updated = await prisma.sector.update({
+    where: { id },
+    data: { managersRoomId: room!.id, managersRoomTitle: room!.title },
+  });
+  await logAudit(userId, "Sector", id, "UPDATE", {
+    name: sector.name,
+    managersRoomId: room!.id,
+    managersRoomTitle: room!.title,
+  });
+  return updated;
 }

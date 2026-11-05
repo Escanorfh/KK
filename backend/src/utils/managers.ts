@@ -13,6 +13,11 @@ export class ManagersApiError extends Error {
   }
 }
 
+export interface ManagersRoom {
+  id: number;
+  title: string;
+}
+
 export interface ManagersProject {
   id: number;
   title: string;
@@ -20,6 +25,8 @@ export interface ManagersProject {
   roomId: number | null;
   roomTitle: string | null;
   status: string | null;
+  /** القطاعات (الغرف) التي يسمح التوكن بالتقديم عليها ضمن هذا المشروع */
+  rooms: ManagersRoom[];
 }
 
 export interface ManagersRequisition {
@@ -142,6 +149,23 @@ function readProject(raw: JsonRecord): ManagersProject | null {
   const id = toInt(raw.id);
   const title = toText(raw.title);
   if (!id || !title) return null;
+  const rawRooms = Array.isArray(raw.rooms) ? raw.rooms : [];
+  const rooms: ManagersRoom[] = [];
+  for (const item of rawRooms) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as JsonRecord;
+    const roomId = toInt(record.room_id);
+    const roomTitle = toText(record.room_title);
+    if (!roomId || !roomTitle) continue;
+    if (rooms.some((r) => r.id === roomId)) continue;
+    rooms.push({ id: roomId, title: roomTitle });
+  }
+  // المشروع بلا مصفوفة rooms لكن له غرفة ضمنية واحدة — نعتبرها القائمة المتاحة
+  if (!rooms.length) {
+    const roomId = toInt(raw.room_id);
+    const roomTitle = toText(raw.room_title);
+    if (roomId && roomTitle) rooms.push({ id: roomId, title: roomTitle });
+  }
   return {
     id,
     title,
@@ -149,6 +173,7 @@ function readProject(raw: JsonRecord): ManagersProject | null {
     roomId: toInt(raw.room_id),
     roomTitle: toText(raw.room_title),
     status: toText(raw.status),
+    rooms,
   };
 }
 
@@ -473,4 +498,49 @@ export function managersDate(value: Date | string | null | undefined): string | 
   if (!value) return null;
   if (typeof value === "string") return value.slice(0, 10);
   return value.toISOString().slice(0, 10);
+}
+
+/** القطاع المحلي بالقدر اللازم للربط — بلا ارتباط مباشر بنموذج Prisma */
+export interface LocalSectorForManagers {
+  id: number;
+  name: string;
+  managersRoomId: number | null;
+  managersRoomTitle?: string | null;
+}
+
+// فحص محلي تمامًا: يمنع الإرسال المعروفة نتيجته (HTTP 403 «بدون قطاع») قبل ما يلمس الشبكة
+export function assertSectorSendable(
+  sector: LocalSectorForManagers | null | undefined
+): LocalSectorForManagers {
+  if (!sector) {
+    throw new ManagersApiError(
+      "اختر القطاع التابع للمشروع أولًا — نظام المدرين برفض طلبات الاحتياج بلا قطاع",
+      422
+    );
+  }
+  if (sector.managersRoomId == null) {
+    throw new ManagersApiError(
+      `القطاع «${sector.name}» غير مربوط بقطاع في نظام المدرين. من إدارة المشاريع → قطاعات هذا المشروع اختر «قطاع نظام المدرين» المطابق`,
+      422
+    );
+  }
+  return sector;
+}
+
+// معرّف القطاع الخارجي جايب من الربط المراجع، مش من معرّف EFMS ولا من تشابه الأسماء
+export function resolveAuthorizedRoom(
+  project: ManagersProject,
+  sector: LocalSectorForManagers
+): ManagersRoom {
+  assertSectorSendable(sector);
+  const roomId = sector.managersRoomId as number;
+  const room = project.rooms.find((item) => item.id === roomId);
+  if (!room) {
+    const available = project.rooms.map((item) => `«${item.title}» (${item.id})`).join("، ") || "لا توجد قطاعات مصرّح بها لهذا المشروع";
+    throw new ManagersApiError(
+      `القطاع «${sector.managersRoomTitle ?? sector.name}» (معرّف ${roomId}) مش ضمن القطاعات المصرّح بها للتوكن في مشروع «${project.title}» عند المدرين. المتاحة: ${available}`,
+      422
+    );
+  }
+  return room;
 }

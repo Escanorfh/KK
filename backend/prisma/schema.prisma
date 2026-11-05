@@ -123,10 +123,14 @@ model Sector {
   projectId Int
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name      String
+  /// معرّف قطاع نظام المدرين (room_id) — بيبقى null للقطاعات غير المربوطة؛ الربط مراجعة يدوية مش تشابه أسماء
+  managersRoomId   Int?
+  managersRoomTitle String?
 
   equipment    Equipment[]
   faults       Fault[]
   repairOrders RepairOrder[]
+  needRequests NeedRequest[]
 
   @@unique([projectId, name])
   @@schema("core")
@@ -266,6 +270,8 @@ model NeedRequest {
   requestNo        Int               @unique
   projectId        Int?
   project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId         Int?
+  sector           Sector?           @relation(fields: [sectorId], references: [id], onDelete: SetNull)
   department       String
   requestDate      DateTime          @db.Date
   status           NeedRequestStatus @default(DRAFT)

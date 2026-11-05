@@ -4,21 +4,27 @@ import { scopeOr } from "../../utils/scope";
 import type { NeedRequestStatus } from "@prisma/client";
 import {
   ManagersApiError,
+  assertSectorSendable,
   createRequisition,
   deleteRequisition,
   getRequisition,
   managersDate,
   mapRequisitionDepartment,
+  resolveAuthorizedRoom,
   resolveManagersProject,
   requisitionStatusLabel,
   updateRequisition,
   type ManagersProject,
+  type ManagersRoom,
 } from "../../utils/managers";
 
 const recordInclude = {
   items: { orderBy: { rowNo: "asc" as const } },
   createdBy: { select: { id: true, name: true } },
   project: { select: { id: true, name: true, code: true } },
+  sector: {
+    select: { id: true, name: true, managersRoomId: true, managersRoomTitle: true, projectId: true },
+  },
 } as const;
 
 type NeedItemInput = {
@@ -75,9 +81,24 @@ async function assertProject(projectId: number) {
   return project;
 }
 
+// التحقق من القطاع وعلاقته بالمشروع المختار — في السيرفر مش الواجهة فقط
+async function assertSector(sectorId: number, projectId: number | null | undefined) {
+  const sector = await prisma.sector.findUnique({
+    where: { id: sectorId },
+    select: { id: true, name: true, projectId: true },
+  });
+  if (!sector) fail("القطاع غير موجود", 404);
+  if (projectId == null) fail(`القطاع «${sector.name}» يحتاج مشروعًا محددًا أولًا`, 422);
+  if (sector.projectId !== projectId) {
+    fail(`القطاع «${sector.name}» لا يتبع المشروع المحدد — اختر قطاعًا من قطاعات المشروع`, 422);
+  }
+  return sector;
+}
+
 export async function create(
   data: {
     projectId?: number | null;
+    sectorId?: number | null;
     department: string;
     requestDate: string;
     items: NeedItemInput[];
@@ -85,6 +106,7 @@ export async function create(
   userId: number
 ) {
   if (data.projectId != null) await assertProject(data.projectId);
+  if (data.sectorId != null) await assertSector(data.sectorId, data.projectId ?? null);
 
   const max = await prisma.needRequest.aggregate({ _max: { requestNo: true } });
   const requestNo = (max._max.requestNo ?? 0) + 1;
@@ -93,6 +115,7 @@ export async function create(
     data: {
       requestNo,
       projectId: data.projectId ?? null,
+      sectorId: data.sectorId ?? null,
       department: data.department,
       requestDate: new Date(data.requestDate),
       createdById: userId,
@@ -118,6 +141,7 @@ export async function create(
     requestNo,
     department: data.department,
     projectId: data.projectId ?? null,
+    sectorId: data.sectorId ?? null,
   });
   return { record: decorate(record) };
 }
@@ -197,7 +221,7 @@ function buildRemoteNotes(record: { requestNo: number; department: string }) {
   return `طلب احتياج EFMS رقم ${formatNo(record.requestNo)} — الجهة: ${record.department}`;
 }
 
-function buildCreatePayload(
+export function buildCreatePayload(
   record: {
     requestNo: number;
     department: string;
@@ -205,13 +229,15 @@ function buildCreatePayload(
     createdBy?: { name: string } | null;
     items: NeedItemRecord[];
   },
-  remoteProject: ManagersProject
+  remoteProject: ManagersProject,
+  room: ManagersRoom
 ) {
   const department = mapRequisitionDepartment(record.department);
   const date = managersDate(record.requestDate);
   return {
     project_id: remoteProject.id,
-    ...(remoteProject.roomId ? { room_id: remoteProject.roomId } : {}),
+    // اسم الحقل وقيمتهما من مواصفات المدرين: RequisitionCreateInput.room_id = معرّف قطاع النظام
+    room_id: room.id,
     department,
     notes: buildRemoteNotes(record),
     header: {
@@ -256,6 +282,7 @@ export async function update(
   id: number,
   data: {
     projectId?: number | null;
+    sectorId?: number | null;
     department?: string;
     requestDate?: string;
     items?: NeedItemInput[];
@@ -277,6 +304,23 @@ export async function update(
   if (nextProjectId !== existing.projectId) {
     if (existing.managersId) fail("لا يمكن تغيير المشروع بعد ربط الطلب بنظام المدرين", 409);
     nextProject = nextProjectId != null ? await assertProject(nextProjectId) : null;
+  }
+
+  // القطاع الصريح غير التابع للمشروع يُرفض؛ أما القطاع القديم فيلغى نفسه لما المشروع يتغيّر من غيره
+  const sectorProvided = data.sectorId !== undefined;
+  let nextSectorId = sectorProvided ? data.sectorId : existing.sectorId;
+  let sectorCleared = false;
+
+  if (nextSectorId != null) {
+    if (sectorProvided) {
+      if (existing.managersId && nextSectorId !== existing.sectorId) {
+        fail("لا يمكن تغيير القطاع بعد ربط الطلب بنظام المدرين — نظام المدرين بيقبل القطاع عند الإنشاء فقط", 409);
+      }
+      await assertSector(nextSectorId, nextProjectId);
+    } else if (existing.sector?.projectId !== nextProjectId) {
+      nextSectorId = null;
+      sectorCleared = true;
+    }
   }
 
   const nextItems: NeedItemRecord[] = data.items
@@ -318,6 +362,7 @@ export async function update(
     where: { id },
     data: {
       ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
+      ...(sectorProvided || sectorCleared ? { sectorId: nextSectorId } : {}),
       department: nextDepartment,
       requestDate: nextDate,
       ...(data.items !== undefined
@@ -387,12 +432,15 @@ export async function send(id: number, userId: number) {
   if (!existing.project) {
     fail("اختر المشروع قبل إرسال الطلب لنظام المدرين", 422);
   }
+  // محلي فقط: بلا قطاع أو بلا ربط خارجي — تمنع الإرسال برسالة مفهومة بدل 403 من المدرين
+  const sector = assertSectorSendable(existing.sector);
 
   let remoteCreated: { id: number; number: string | null } | null = null;
 
   try {
     const remoteProject = await resolveManagersProject(existing.project);
-    const payload = buildCreatePayload(existing, remoteProject);
+    const room = resolveAuthorizedRoom(remoteProject, sector);
+    const payload = buildCreatePayload(existing, remoteProject, room);
     remoteCreated = await createRequisition(payload);
 
     const remote = await refreshRemoteStatus(remoteCreated.id, remoteCreated.number);

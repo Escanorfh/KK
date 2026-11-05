@@ -12,3 +12,11 @@ export const updateSectorSchema = z.object({
 export const listSectorsQuerySchema = z.object({
   projectId: z.coerce.number().int().positive().optional(),
 });
+
+export const linkManagersRoomSchema = z.object({
+  managersRoomId: z.coerce.number().int().positive("اختر قطاع نظام المدرين").nullable(),
+});
+
+export const managersRoomsQuerySchema = z.object({
+  projectId: z.coerce.number().int().positive("اختر المشروع"),
+});

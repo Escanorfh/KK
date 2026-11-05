@@ -25,6 +25,7 @@ const itemSchema = z.object({
 
 export const createNeedRequestSchema = z.object({
   projectId: z.coerce.number().int().positive("اختر المشروع").nullable().optional(),
+  sectorId: z.coerce.number().int().positive("اختر القطاع").nullable().optional(),
   department: z.string().trim().min(1, "الجهة الطالبة مطلوبة"),
   requestDate: dateStr,
   items: z.array(itemSchema).min(1, "أضف صنفًا واحدًا على الأقل").max(50),
@@ -32,6 +33,7 @@ export const createNeedRequestSchema = z.object({
 
 export const updateNeedRequestSchema = z.object({
   projectId: z.coerce.number().int().positive("اختر المشروع").nullable().optional(),
+  sectorId: z.coerce.number().int().positive("اختر القطاع").nullable().optional(),
   department: z.string().trim().min(1, "الجهة الطالبة مطلوبة").optional(),
   requestDate: dateStr.optional(),
   items: z.array(itemSchema).min(1, "أضف صنفًا واحدًا على الأقل").max(50).optional(),

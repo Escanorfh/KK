@@ -18,12 +18,21 @@ export interface NeedRequestItem {
   notes?: string | null;
 }
 
+export interface NeedRequestSectorRef {
+  id: number;
+  name: string;
+  managersRoomId?: number | null;
+  managersRoomTitle?: string | null;
+}
+
 export interface NeedRequest {
   id: number;
   requestNo: number;
   requestNoText: string;
   projectId?: number | null;
   project?: { id: number; name: string; code?: string | null } | null;
+  sectorId?: number | null;
+  sector?: NeedRequestSectorRef | null;
   department: string;
   requestDate: string;
   status: NeedRequestStatus;
@@ -42,6 +51,7 @@ export interface NeedRequest {
 
 export interface NeedRequestPayload {
   projectId?: number | null;
+  sectorId?: number | null;
   department: string;
   requestDate: string;
   items: NeedRequestItem[];

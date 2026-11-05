@@ -66,3 +66,25 @@ export async function deleteSector(id: number) {
   const { data } = await api.delete<{ message: string }>(`/sectors/${id}`);
   return data;
 }
+
+export interface ManagersSectorOption {
+  id: number;
+  title: string;
+}
+
+/** القطاعات (الغرف) المصرّح بها للتوكن عند المدرين للمشروع المحلي — للمراجعة البشرية قبل الربط */
+export async function managersSectorOptions(projectId: number) {
+  const { data } = await api.get<{
+    project: { id: number; name: string };
+    remoteProject: { id: number; title: string; code: string | null } | null;
+    rooms: ManagersSectorOption[];
+    warning: string | null;
+  }>("/sectors/managers-rooms", { params: { projectId } });
+  return data;
+}
+
+/** ربط القطاع المحلي بقطاع المدرين المختار يدويًا — null لإلغاء الربط */
+export async function linkSectorManagersRoom(sectorId: number, managersRoomId: number | null) {
+  const { data } = await api.put<Sector>(`/sectors/${sectorId}/managers-room`, { managersRoomId });
+  return data;
+}

@@ -38,3 +38,22 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
     next(err);
   }
 }
+
+export async function managersRooms(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { projectId } = (req as Request & { validatedQuery: { projectId: number } }).validatedQuery;
+    res.json(await sectorService.managersRooms(projectId));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function linkManagersRoom(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { managersRoomId } = req.body as { managersRoomId: number | null };
+    const sector = await sectorService.linkManagersRoom(Number(req.params.id), managersRoomId, req.user!.id);
+    res.json(sector);
+  } catch (err) {
+    next(err);
+  }
+}

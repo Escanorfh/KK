@@ -32,6 +32,9 @@ export interface Sector {
   id: number;
   projectId: number;
   name: string;
+  /** معرّف قطاع نظام المدرين (room_id) — null يعني القطاع غير مربوط، فالإرسال يتمنع */
+  managersRoomId?: number | null;
+  managersRoomTitle?: string | null;
   /** عدّاد المعدات من شيت الـ day (آخر يوم مسجل) — لو مفيش سجل يومي يرجع للإسناد الحالي */
   activeEquipment?: number;
 }

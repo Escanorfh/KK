@@ -15,7 +15,7 @@ import {
 import { cn, todayLocal } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
 import { isQueued } from "@/lib/offline/queue";
-import { projectOptions } from "@/services/projects";
+import { projectOptions, listSectors, type SectorRow } from "@/services/projects";
 import {
   createNeedRequest,
   updateNeedRequest,
@@ -57,6 +57,7 @@ function emptyItem(): NeedRequestItem {
 
 const emptyForm: NeedRequestPayload = {
   projectId: null,
+  sectorId: null,
   department: "",
   requestDate: todayLocal(),
   items: [emptyItem()],
@@ -86,6 +87,8 @@ export default function NeedRequestsPage() {
   const [statusFilter, setStatusFilter] = useState<"" | NeedRequestStatus>("");
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<{ id: number; name: string; code?: string | null }[]>([]);
+  const [sectors, setSectors] = useState<SectorRow[]>([]);
+  const [sectorsLoading, setSectorsLoading] = useState(false);
 
   const [view, setView] = useState<"list" | "form" | "detail">("list");
   const [form, setForm] = useState<NeedRequestPayload>(emptyForm);
@@ -131,6 +134,35 @@ export default function NeedRequestsPage() {
       .catch(() => undefined);
   }, []);
 
+  // قطاعات المشروع المختار بس — من غير كده الاختيار بيبقى قطاع من مشروع تاني والسيرفر برفضه
+  useEffect(() => {
+    if (view !== "form" || !form.projectId) {
+      setSectors([]);
+      return;
+    }
+    const projectId = form.projectId;
+    let cancelled = false;
+    setSectorsLoading(true);
+    listSectors(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        setSectors(rows);
+        // قطاع مش في قائمة المشروع = قطاع قديم اتلغى اختياره
+        setForm((f) =>
+          f.sectorId != null && !rows.some((s) => s.id === f.sectorId) ? { ...f, sectorId: null } : f
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSectors([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSectorsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, form.projectId]);
+
   const openForm = (rec?: NeedRequest) => {
     setFieldErrors({});
     setLockProject(Boolean(rec?.managersId));
@@ -138,6 +170,7 @@ export default function NeedRequestsPage() {
       setEditId(rec.id);
       setForm({
         projectId: rec.projectId ?? rec.project?.id ?? null,
+        sectorId: rec.sectorId ?? rec.sector?.id ?? null,
         department: rec.department,
         requestDate: rec.requestDate.slice(0, 10),
         items: (rec.items ?? []).map((it) => ({ ...it })),
@@ -153,6 +186,7 @@ export default function NeedRequestsPage() {
     e.preventDefault();
     const fe: Record<string, string[]> = {};
     if (!form.projectId) fe.projectId = ["اختر المشروع"];
+    if (!form.sectorId) fe.sectorId = ["اختر القطاع"];
     if (!form.department.trim()) fe.department = ["الجهة الطالبة مطلوبة"];
     const items = form.items.filter((it) => it.itemName.trim());
     if (!items.length) fe.items = ["أضف صنفًا واحدًا على الأقل"];
@@ -165,6 +199,7 @@ export default function NeedRequestsPage() {
     try {
       const payload: NeedRequestPayload = {
         projectId: form.projectId ?? null,
+        sectorId: form.sectorId ?? null,
         department: form.department.trim(),
         requestDate: form.requestDate,
         items: items.map((it) => ({
@@ -221,6 +256,14 @@ export default function NeedRequestsPage() {
       toast.error("اختر المشروع أولًا من شاشة التعديل قبل الإرسال");
       return;
     }
+    if (!selected.sectorId) {
+      toast.error("اختر القطاع أولًا من شاشة التعديل — نظام المدرين بيرفض أي طلب احتياج بلا قطاع");
+      return;
+    }
+    if (selected.sector && selected.sector.managersRoomId == null) {
+      toast.error(`القطاع «${selected.sector.name}» غير مربوط بقطاع في نظام المدرين — اربطه من إدارة المشاريع`);
+      return;
+    }
     setSending(true);
     try {
       const res = await sendNeedRequest(selected.id);
@@ -275,6 +318,9 @@ export default function NeedRequestsPage() {
   const removeItem = (i: number) => setForm((f) => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }));
 
   const linked = Boolean(selected?.managersId);
+  // قطاع محلي مربوط بس بمشروع، من غير room_id من المدرين = الإرسال هيفشل
+  const selectedSectorUnlinked =
+    sectors.find((s) => s.id === form.sectorId && s.managersRoomId == null) ?? null;
   const canEdit = Boolean(selected && (selected.status !== "SENT" || linked));
   const canSend = Boolean(selected && !linked && selected.status !== "SENT");
   const printRows = selected?.items ?? [];
@@ -423,7 +469,7 @@ export default function NeedRequestsPage() {
 
         {view === "form" && (
           <form onSubmit={handleSave} className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
               <div>
                 <label className={labelCls}>
                   المشروع <span className="text-red-500">*</span>
@@ -432,8 +478,9 @@ export default function NeedRequestsPage() {
                   value={form.projectId ?? ""}
                   disabled={lockProject}
                   onChange={(e) => {
-                    setForm((f) => ({ ...f, projectId: e.target.value ? Number(e.target.value) : null }));
-                    setFieldErrors((fe) => ({ ...fe, projectId: [] }));
+                    // تغيير المشروع يلغي القطاع: قطاع مشروع تاني مش مقبول عند المدرين
+                    setForm((f) => ({ ...f, projectId: e.target.value ? Number(e.target.value) : null, sectorId: null }));
+                    setFieldErrors((fe) => ({ ...fe, projectId: [], sectorId: [] }));
                   }}
                   className={cn(inputCls, "w-full disabled:bg-slate-100 disabled:text-slate-500", err("projectId") && "border-red-400")}
                 >
@@ -448,6 +495,46 @@ export default function NeedRequestsPage() {
                   <p className="text-[11px] text-amber-600 mt-1">لا يمكن تغيير المشروع بعد ربط الطلب بنظام المدرين</p>
                 )}
                 {err("projectId") && <p className="text-xs text-red-600 mt-1">{err("projectId")}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>
+                  القطاع <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.sectorId ?? ""}
+                  disabled={!form.projectId || sectorsLoading}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, sectorId: e.target.value ? Number(e.target.value) : null }));
+                    setFieldErrors((fe) => ({ ...fe, sectorId: [] }));
+                  }}
+                  className={cn(
+                    inputCls,
+                    "w-full disabled:bg-slate-100 disabled:text-slate-500",
+                    err("sectorId") && "border-red-400"
+                  )}
+                >
+                  <option value="">
+                    {!form.projectId ? "اختر المشروع أولًا..." : sectorsLoading ? "جاري تحميل القطاعات..." : "اختر القطاع..."}
+                  </option>
+                  {sectors.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.managersRoomId == null ? " — غير مربوط بنظام المدرين" : ""}
+                    </option>
+                  ))}
+                </select>
+                {form.projectId && !sectorsLoading && sectors.length === 0 && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    لا توجد قطاعات لهذا المشروع — أضِفها من «إدارة المشاريع» قبل إنشاء الطلب
+                  </p>
+                )}
+                {selectedSectorUnlinked && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    القطاع «{selectedSectorUnlinked.name}» غير مربوط بقطاع في نظام المدرين — اربطه من «إدارة المشاريع» حتى
+                    يتمكن الإرسال
+                  </p>
+                )}
+                {err("sectorId") && <p className="text-xs text-red-600 mt-1">{err("sectorId")}</p>}
               </div>
               <div>
                 <label className={labelCls}>
@@ -687,7 +774,7 @@ export default function NeedRequestsPage() {
                 </div>
 
                 <div className="px-5 py-4 space-y-5">
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
                     <div className="rounded-lg bg-slate-50 p-3">
                       <p className="text-[11px] text-slate-400 font-semibold">رقم الطلب</p>
                       <p className="font-bold text-slate-700 font-mono">{selected.requestNoText}</p>
@@ -695,6 +782,25 @@ export default function NeedRequestsPage() {
                     <div className="rounded-lg bg-slate-50 p-3">
                       <p className="text-[11px] text-slate-400 font-semibold">المشروع</p>
                       <p className="font-bold text-slate-700">{selected.project?.name || "—"}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-[11px] text-slate-400 font-semibold">القطاع</p>
+                      <p className="font-bold text-slate-700">{selected.sector?.name || "—"}</p>
+                      {selected.sector ? (
+                        selected.sector.managersRoomId == null ? (
+                          <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
+                            غير مربوط بنظام المدرين
+                          </span>
+                        ) : (
+                          <span className="block font-mono text-[10px] text-slate-400 font-normal mt-1">
+                            معرّف القطاع عندهم: {selected.sector.managersRoomId}
+                          </span>
+                        )
+                      ) : (
+                        <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold">
+                          لا يمكن الإرسال بلا قطاع
+                        </span>
+                      )}
                     </div>
                     <div className="rounded-lg bg-slate-50 p-3">
                       <p className="text-[11px] text-slate-400 font-semibold">الجهة الطالبة</p>
@@ -809,9 +915,9 @@ export default function NeedRequestsPage() {
               </tr>
               <tr>
                 <td className={printLabel}>المشروع</td>
-                <td className={cn(printCell, "text-center font-bold")} colSpan={3}>
-                  {selected.project?.name || "—"}
-                </td>
+                <td className={cn(printCell, "text-center font-bold")}>{selected.project?.name || "—"}</td>
+                <td className={printLabel}>القطاع</td>
+                <td className={cn(printCell, "text-center font-bold")}>{selected.sector?.name || "—"}</td>
               </tr>
             </tbody>
           </table>

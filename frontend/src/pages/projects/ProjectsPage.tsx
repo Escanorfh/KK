@@ -28,7 +28,10 @@ import {
   createSector,
   updateSector,
   deleteSector,
+  managersSectorOptions,
+  linkSectorManagersRoom,
   type SectorRow,
+  type ManagersSectorOption,
 } from "@/services/projects";
 
 const inputCls =
@@ -70,6 +73,10 @@ export default function ProjectsPage() {
   const [newSector, setNewSector] = useState("");
   const [editSector, setEditSector] = useState<{ id: number; name: string } | null>(null);
   const [sectorSaving, setSectorSaving] = useState(false);
+  const [managersRooms, setManagersRooms] = useState<ManagersSectorOption[]>([]);
+  const [managersWarning, setManagersWarning] = useState<string | null>(null);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [linkingSectorId, setLinkingSectorId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -172,7 +179,18 @@ export default function ProjectsPage() {
     setSectorProject(p);
     setNewSector("");
     setEditSector(null);
+    setManagersRooms([]);
+    setManagersWarning(null);
     setSectorsLoading(true);
+    // قائمة قطاعات المدرين للمراجعة البشرية — فشلها ما يمنعش إدارة القطاعات المحلية
+    setRoomsLoading(true);
+    managersSectorOptions(p.id)
+      .then((r) => {
+        setManagersRooms(r.rooms);
+        setManagersWarning(r.warning);
+      })
+      .catch(() => setManagersWarning("تعذر جلب قطاعات نظام المدرين لهذا المشروع"))
+      .finally(() => setRoomsLoading(false));
     try {
       setSectors(await listSectors(p.id));
     } catch (err2) {
@@ -180,6 +198,24 @@ export default function ProjectsPage() {
       setSectorProject(null);
     } finally {
       setSectorsLoading(false);
+    }
+  };
+
+  const linkSector = async (s: SectorRow, managersRoomId: number | null) => {
+    if (!sectorProject) return;
+    setLinkingSectorId(s.id);
+    try {
+      await linkSectorManagersRoom(s.id, managersRoomId);
+      toast.success(
+        managersRoomId === null
+          ? `تم إلغاء ربط القطاع «${s.name}»`
+          : `تم ربط القطاع «${s.name}» بقطاع المدرين`
+      );
+      setSectors(await listSectors(sectorProject.id));
+    } catch (err2) {
+      toast.error(getApiError(err2));
+    } finally {
+      setLinkingSectorId(null);
     }
   };
 
@@ -506,6 +542,14 @@ export default function ProjectsPage() {
               </button>
             </div>
 
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
+              كل قطاع هنا لازم يتربط بقطاع نظام المدرين (room_id) عشان طلبات الاحتياج تقدر تُرسل — الربط يدوي ومراجع،
+              والنظام ما بيربطش تلقائيًا بالتشابه في الأسماء.
+              {managersWarning && (
+                <span className="block mt-1 text-amber-700 font-semibold">{managersWarning}</span>
+              )}
+            </div>
+
             <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-72 overflow-y-auto">
               {sectorsLoading ? (
                 <div className="px-3 py-6 text-center text-slate-400 text-sm">
@@ -540,6 +584,40 @@ export default function ProjectsPage() {
                           <span className="flex-1 text-[13px] font-semibold text-slate-700 truncate">
                             {s.name}
                           </span>
+                          <select
+                            value={s.managersRoomId ?? ""}
+                            disabled={linkingSectorId === s.id || (!managersRooms.length && !s.managersRoomId)}
+                            onChange={(e) =>
+                              void linkSector(s, e.target.value ? Number(e.target.value) : null)
+                            }
+                            title="قطاع نظام المدرين المطابق — مطلوب لإرسال طلبات الاحتياج"
+                            className={cn(
+                              inputCls,
+                              "w-48 py-1.5 text-[12px] shrink-0",
+                              s.managersRoomId == null && "border-amber-300 bg-amber-50 text-amber-800"
+                            )}
+                          >
+                            <option value="">
+                              {roomsLoading
+                                ? "جاري جلب قطاعات المدرين..."
+                                : managersRooms.length
+                                  ? "غير مربوط — اختر قطاعًا"
+                                  : "لا توجد قطاعات عند المدرين"}
+                            </option>
+                            {managersRooms.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.title} ({r.id})
+                              </option>
+                            ))}
+                            {/* ربط قديم اختفى من قائمة التوكن — نظهره عشان الإلغاء يفضل متاح */}
+                            {s.managersRoomId != null &&
+                              !managersRooms.some((r) => r.id === s.managersRoomId) && (
+                                <option value={s.managersRoomId}>
+                                  {s.managersRoomTitle ?? `معرّف ${s.managersRoomId}`} (لم يعد مصرّح به)
+                                </option>
+                              )}
+                          </select>
+                          {linkingSectorId === s.id && <Loader2 size={14} className="animate-spin text-slate-400 shrink-0" />}
                           <span
                             className="text-[11px] font-mono text-slate-400 shrink-0"
                             title="عدّاد المعدات من شيت الـ day (آخر يوم مسجل)"
