@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { WorkStatus, WorkType, Condition } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { managersProjects, normalizeArabic } from "../../utils/managers";
+import { syncSectorsForProject } from "../sectors/sector.service";
 import { withDbRetry } from "../../utils/db";
 
 function fail(message: string, status: number): never {
@@ -1265,16 +1266,33 @@ export interface ManagersProjectsSyncResult {
   created: number;
   updated: number;
   unchanged: number;
+  sectors: ManagersSectorsSyncSummary;
+}
+
+export interface ManagersSectorsSyncSummary {
+  created: number;
+  linked: number;
+  unchanged: number;
+  skipped: number;
+  stale: number;
+  error: string | null;
 }
 
 /**
  * جلب كل مشاريع نظام المدرين (/requisitions/projects) ومزامنتها مع المشاريع المحلية:
  * المطابقة بالكود أولًا ثم بالاسم (بعد التطبيع العربي) — المشروع الموجود بيتحدّث واللي مش موجود بيتعمل جديد.
+ * ومع كل مشروع بتتجلب قطاعاته المصرّح بها (rooms[]) وتترابط به (انظر syncSectorsForProject).
  * لو حصل أي تغيير بيتتسجّل في سجل الاستيراد عشان يظهر في «إدارة البيانات» ويتمكّن ROOT من حذفه.
  */
 export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncResult> {
   const remote = await managersProjects(true);
-  const result: ManagersProjectsSyncResult = { fetched: remote.length, created: 0, updated: 0, unchanged: 0 };
+  const result: ManagersProjectsSyncResult = {
+    fetched: remote.length,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    sectors: { created: 0, linked: 0, unchanged: 0, skipped: 0, stale: 0, error: null },
+  };
   const createdIds: number[] = [];
 
   const local = await prisma.project.findMany({ select: { id: true, code: true, name: true } });
@@ -1292,36 +1310,50 @@ export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncRe
       (r.code ? byCode.get(r.code.trim().toLowerCase()) : undefined) ??
       (remoteName ? byName.get(remoteName) : undefined);
 
+    let localId: number;
     if (!match) {
       const made = await prisma.project.create({ data: { code: r.code, name: r.title } });
       createdIds.push(made.id);
       result.created++;
+      localId = made.id;
       if (r.code) byCode.set(r.code.trim().toLowerCase(), made);
       if (remoteName && !byName.has(remoteName)) byName.set(remoteName, made);
-      continue;
+    } else {
+      localId = match.id;
+      const data: { name?: string; code?: string | null } = {};
+      if (match.name !== r.title) data.name = r.title;
+      if (r.code && match.code !== r.code) {
+        // الكود عليه قيد فريد محليًا — لو مشغول من مشروع تاني نكتفي بتحديث الاسم
+        const owner = await prisma.project.findUnique({ where: { code: r.code }, select: { id: true } });
+        if (!owner || owner.id === match.id) data.code = r.code;
+      }
+      if (Object.keys(data).length > 0) {
+        await prisma.project.update({ where: { id: match.id }, data });
+        result.updated++;
+      } else {
+        result.unchanged++;
+      }
     }
 
-    const data: { name?: string; code?: string | null } = {};
-    if (match.name !== r.title) data.name = r.title;
-    if (r.code && match.code !== r.code) {
-      // الكود عليه قيد فريد محليًا — لو مشغول من مشروع تاني نكتفي بتحديث الاسم
-      const owner = await prisma.project.findUnique({ where: { code: r.code }, select: { id: true } });
-      if (!owner || owner.id === match.id) data.code = r.code;
-    }
-    if (Object.keys(data).length > 0) {
-      await prisma.project.update({ where: { id: match.id }, data });
-      result.updated++;
-    } else {
-      result.unchanged++;
+    // مزامنة القطاعات ما توقّفش مزامنة المشاريع: أي فشل بيتبلّغ في النتيجة ونكمّل
+    try {
+      const sectors = await syncSectorsForProject(localId, r.rooms);
+      result.sectors.created += sectors.created;
+      result.sectors.linked += sectors.linked;
+      result.sectors.unchanged += sectors.unchanged;
+      result.sectors.skipped += sectors.skipped.length;
+      result.sectors.stale += sectors.stale.length;
+    } catch (err) {
+      result.sectors.error = err instanceof Error ? err.message : String(err);
     }
   }
 
-  if (result.created > 0 || result.updated > 0) {
+  if (result.created > 0 || result.updated > 0 || result.sectors.created > 0 || result.sectors.linked > 0) {
     await prisma.importLog.create({
       data: {
         entity: "projects",
         fileName: "نظام المدرين",
-        sheetName: "مزامنة تلقائية للمشاريع",
+        sheetName: `مزامنة تلقائية للمشاريع والقطاعات (${result.sectors.created} قطاع جديد)`,
         created: result.created,
         updated: result.updated,
         skipped: 0,
@@ -1345,7 +1377,9 @@ export function startProjectsAutoSync(intervalMs = PROJECTS_SYNC_INTERVAL_MS) {
     try {
       const result = await withDbRetry(() => syncProjectsFromManagers());
       console.log(
-        `[projects-sync] ${result.fetched} مشروع من نظام المدرين — ${result.created} جديد، ${result.updated} تحديث، ${result.unchanged} بدون تغيير`
+        `[projects-sync] ${result.fetched} مشروع من نظام المدرين — ${result.created} جديد، ${result.updated} تحديث، ${result.unchanged} بدون تغيير | قطاعات: ${result.sectors.created} جديد، ${result.sectors.linked} ربط، ${result.sectors.unchanged} موجود${
+          result.sectors.error ? ` | فشل: ${result.sectors.error}` : ""
+        }`
       );
     } catch (err) {
       console.warn(

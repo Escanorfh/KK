@@ -165,7 +165,9 @@ export default function ProjectsPage() {
     try {
       const r = await syncProjectsFromManagers();
       toast.success(
-        `تم جلب ${r.fetched} مشروع من نظام المدرين — ${r.created} جديد، ${r.updated} تحديث، ${r.unchanged} بدون تغيير`
+        `تم جلب ${r.fetched} مشروع من نظام المدرين — ${r.created} جديد، ${r.updated} تحديث، ${r.unchanged} بدون تغيير | قطاعات: ${r.sectors.created} جديد، ${r.sectors.linked} ربط${
+          r.sectors.error ? ` — تعذرت مزامنة القطاعات: ${r.sectors.error}` : ""
+        }`
       );
       load();
     } catch (err2) {
@@ -182,7 +184,7 @@ export default function ProjectsPage() {
     setManagersRooms([]);
     setManagersWarning(null);
     setSectorsLoading(true);
-    // قائمة قطاعات المدرين للمراجعة البشرية — فشلها ما يمنعش إدارة القطاعات المحلية
+    // القطاعات بتتجلب أوتوماتيك مع المزامنة — هنا لسه بنجيبها للمراجعة اليدوية وإدارة الربط
     setRoomsLoading(true);
     managersSectorOptions(p.id)
       .then((r) => {
@@ -543,8 +545,9 @@ export default function ProjectsPage() {
             </div>
 
             <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
-              كل قطاع هنا لازم يتربط بقطاع نظام المدرين (room_id) عشان طلبات الاحتياج تقدر تُرسل — الربط يدوي ومراجع،
-              والنظام ما بيربطش تلقائيًا بالتشابه في الأسماء.
+              كل قطاع هنا لازم يتربط بقطاع نظام المدرين (room_id) عشان طلبات الاحتياج تقدر تُرسل — القطاعات بتتجلب
+              وتترابط أوتوماتيك مع كل مزامنة للمشاريع (بالاعتماد على معرّف الغرفة، مش التشابه في الأسماء)، والموجود
+              هنا بيدوي بيفضل زي ما هو.
               {managersWarning && (
                 <span className="block mt-1 text-amber-700 font-semibold">{managersWarning}</span>
               )}

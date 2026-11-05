@@ -225,9 +225,12 @@ export default function DataManagementPage() {
         created: number;
         updated: number;
         unchanged: number;
+        sectors: { created: number; linked: number; unchanged: number; skipped: number; stale: number; error: string | null };
       }>("/data/sync-projects");
       toast.success(
-        `تم جلب ${data.fetched} مشروع من نظام المدرين — ${data.created} جديد، ${data.updated} تحديث، ${data.unchanged} بدون تغيير`
+        `تم جلب ${data.fetched} مشروع من نظام المدرين — ${data.created} جديد، ${data.updated} تحديث، ${data.unchanged} بدون تغيير | قطاعات: ${data.sectors.created} جديد، ${data.sectors.linked} ربط${
+          data.sectors.error ? ` — تعذرت مزامنة القطاعات: ${data.sectors.error}` : ""
+        }`
       );
       loadStats();
     } catch (err) {
@@ -417,7 +420,7 @@ export default function DataManagementPage() {
                   <button
                     onClick={handleSyncProjects}
                     disabled={busy !== null}
-                    title="تحديث فوري لقائمة المشاريع من نظام المدرين (المزامنة تلقائية كل ساعة)"
+                    title="تحديث فوري للمشاريع وقطاعاتها من نظام المدرين (المزامنة التلقائية كل ساعة)"
                     className="flex items-center gap-1.5 text-xs font-semibold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors disabled:opacity-50"
                   >
                     {busy === "sync-projects" ? (

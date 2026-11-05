@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
-import { resolveManagersProject, type ManagersRoom } from "../../utils/managers";
+import { normalizeArabic, resolveManagersProject, type ManagersRoom } from "../../utils/managers";
 
 function fail(message: string, status = 400): never {
   throw Object.assign(new Error(message), { status });
@@ -145,4 +145,89 @@ export async function linkManagersRoom(id: number, managersRoomId: number | null
     managersRoomTitle: room!.title,
   });
   return updated;
+}
+
+export interface SectorSyncResult {
+  created: number;
+  linked: number;
+  unchanged: number;
+  skipped: { roomTitle: string; reason: string }[];
+  stale: { id: number; name: string; managersRoomId: number }[];
+}
+
+function sectorKey(name: string): string {
+  return normalizeArabic(name).replace(/\s+/g, "");
+}
+
+/**
+ * مزامنة قطاعات مشروع مع الغرف المصرّح بها عنده عند المدرين (rooms[] من /requisitions/projects):
+ * المطابقة بمعرّف الغرفة أولًا، وبعدين بالاسم الحرفي داخل نفس المشروع — التشابه التقريبي ما كانش يومًا مصدر ربط.
+ * مافيش حذف ولا إعادة تسمية لقطاع موجود؛ الغرفة اللي ملهاش قطاع بتتعمل جديدة وهي مربوطة،
+ * والقطاع المربوط بغرفة اتسحبت من التصريح بيفضل زي ما هو وبيتبلّغ عنه للمراجعة.
+ */
+export async function syncSectorsForProject(
+  projectId: number,
+  rooms: ManagersRoom[]
+): Promise<SectorSyncResult> {
+  const result: SectorSyncResult = { created: 0, linked: 0, unchanged: 0, skipped: [], stale: [] };
+
+  const existing = await prisma.sector.findMany({
+    where: { projectId },
+    select: { id: true, name: true, managersRoomId: true, managersRoomTitle: true },
+  });
+  const byRoomId = new Map<number, (typeof existing)[number]>();
+  const byName = new Map<string, (typeof existing)[number]>();
+  for (const s of existing) {
+    if (s.managersRoomId != null) byRoomId.set(s.managersRoomId, s);
+    const key = sectorKey(s.name);
+    if (key && !byName.has(key)) byName.set(key, s);
+  }
+
+  for (const room of rooms) {
+    const already = byRoomId.get(room.id);
+    if (already) {
+      if (already.managersRoomTitle !== room.title) {
+        await prisma.sector.update({ where: { id: already.id }, data: { managersRoomTitle: room.title } });
+        already.managersRoomTitle = room.title;
+      }
+      result.unchanged++;
+      continue;
+    }
+
+    const sameName = byName.get(sectorKey(room.title));
+    if (sameName) {
+      if (sameName.managersRoomId == null) {
+        await prisma.sector.update({
+          where: { id: sameName.id },
+          data: { managersRoomId: room.id, managersRoomTitle: room.title },
+        });
+        sameName.managersRoomId = room.id;
+        sameName.managersRoomTitle = room.title;
+        byRoomId.set(room.id, sameName);
+        result.linked++;
+      } else {
+        // الاسم مشغول بقطاع مربوط بغرفة تانية — القيد @@unique([projectId, name]) بيفرض مراجعة
+        result.skipped.push({
+          roomTitle: room.title,
+          reason: `القطاع «${sameName.name}» مربوط بالفعل بغرفة أخرى (${sameName.managersRoomId})`,
+        });
+      }
+      continue;
+    }
+
+    const made = await prisma.sector.create({
+      data: { projectId, name: room.title, managersRoomId: room.id, managersRoomTitle: room.title },
+    });
+    byRoomId.set(room.id, made);
+    byName.set(sectorKey(room.title), made);
+    result.created++;
+  }
+
+  const authorized = new Set(rooms.map((r) => r.id));
+  for (const s of existing) {
+    if (s.managersRoomId != null && !authorized.has(s.managersRoomId)) {
+      result.stale.push({ id: s.id, name: s.name, managersRoomId: s.managersRoomId });
+    }
+  }
+  return result;
 }

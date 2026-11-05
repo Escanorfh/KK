@@ -37,11 +37,15 @@ export async function deleteProject(id: number) {
   return data;
 }
 
-/** مزامنة فورية لقائمة المشاريع من نظام المدرين (/requisitions/projects) — متاحة لـ ROOT فقط */
+/** مزامنة فورية للمشاريع وقطاعاتها (/requisitions/projects + rooms[]) — متاحة لـ ROOT فقط */
 export async function syncProjectsFromManagers() {
-  const { data } = await api.post<{ fetched: number; created: number; updated: number; unchanged: number }>(
-    "/data/sync-projects"
-  );
+  const { data } = await api.post<{
+    fetched: number;
+    created: number;
+    updated: number;
+    unchanged: number;
+    sectors: { created: number; linked: number; unchanged: number; skipped: number; stale: number; error: string | null };
+  }>("/data/sync-projects");
   return data;
 }
 
