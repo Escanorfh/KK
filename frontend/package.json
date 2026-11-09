@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "icons": "node scripts/gen-icons.mjs public",
     "app:start": "npm run build && electron .",
-    "app:installer": "npm run icons && npm run build && electron-builder --win"
+    "app:installer": "npm run app:installer:x64",
+    "app:installer:x64": "npm run icons && npm run build && electron-builder --win --x64",
+    "app:installer:x86": "node scripts/build-x86-check.cjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
@@ -35,7 +37,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.4.11",
+    "electron": "45.2.3",
     "electron-builder": "^25.1.8",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",

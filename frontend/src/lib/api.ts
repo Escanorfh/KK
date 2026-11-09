@@ -1,7 +1,46 @@
 import axios, { type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 import type { ApiError } from "@/types";
 import { apiBase } from "@/lib/serverUrl";
-import { kvGet, kvSet } from "@/lib/offline/db";
+import { clearKv, kvGet, kvSet } from "@/lib/offline/db";
+
+let isTransitioningSession = false;
+let kvClearPromise: Promise<void> | null = null;
+
+export async function safeClearKvCoordinated(): Promise<void> {
+  if (!kvClearPromise) {
+    kvClearPromise = clearKv().catch((err) => {
+      console.error("KV cache clear failed safely:", err);
+    }).finally(() => {
+      kvClearPromise = null;
+    });
+  }
+  return kvClearPromise;
+}
+
+export async function handleSessionTransition(reason: "401" | "logout" | "switch"): Promise<void> {
+  if (isTransitioningSession) return;
+  isTransitioningSession = true;
+
+  try {
+    // 1. إيقاف وقفل الـ Outbox وبوابة العمليات فوراً
+    const { lockOutboxWorker, beginSessionCoordinationLock } = await import("@/lib/offline/queue");
+    lockOutboxWorker();
+    await beginSessionCoordinationLock();
+
+    // 2. إزالة بيانات الجلسة من التخزين المحلي
+    localStorage.removeItem("efms_token");
+    localStorage.removeItem("efms_user");
+
+    // 3. تنظيف كاش القراءة بشكل منسق مع حماية من الفشل
+    await safeClearKvCoordinated();
+
+    if (reason === "401" && window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+  } finally {
+    isTransitioningSession = false;
+  }
+}
 
 export const api = axios.create({
   baseURL: apiBase(),
@@ -41,11 +80,7 @@ api.interceptors.response.use(
   async (error) => {
     const status = error.response?.status;
     if (status === 401 && !error.config?.url?.includes("/auth/login")) {
-      localStorage.removeItem("efms_token");
-      localStorage.removeItem("efms_user");
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login";
-      }
+      await handleSessionTransition("401");
     }
 
     // بدون اتصال: نخدم آخر نسخة مخزّنة من نفس الطلب

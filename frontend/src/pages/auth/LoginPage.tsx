@@ -1,4 +1,4 @@
-﻿import { useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { LogIn, Loader2 } from "lucide-react";
@@ -21,7 +21,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const data = await loginRequest(name.trim(), password);
-      login(data.token, data.user);
+      await login(data.token, data.user);
       navigate(from, { replace: true });
     } catch (err) {
       toast.error(getApiError(err));

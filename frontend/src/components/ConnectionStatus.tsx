@@ -212,7 +212,9 @@ export default function ConnectionStatus() {
                           <span className="font-bold text-slate-700">{it.kind}</span>
                           <span className="text-[10px] text-slate-400 whitespace-nowrap">{fmtWhen(it.createdAt)}</span>
                         </div>
-                        {it.error ? (
+                        {it.userId === "LEGACY_UNASSIGNED" ? (
+                          <p className="text-[11px] text-amber-700 mt-1">عملية قديمة غير مربوطة بمستخدم — محفوظة محليًا ولن تُرسل تلقائيًا</p>
+                        ) : it.error ? (
                           <p className="text-[11px] text-red-700 mt-1">رفض السيرفر: {it.error}</p>
                         ) : (
                           <p className="text-[11px] text-slate-500 mt-1">

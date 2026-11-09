@@ -1,10 +1,27 @@
 // نقطة تشغيل تطبيق سطح المكتب: يقدّم مجلد dist/ عبر خادم محلي ثم يفتحه في نافذة Electron
 // نستخدم خادم HTTP بدل file:// لأن التوجيه يعتمد على BrowserRouter ومسارات الأصول المطلقة
+try {
+  require("node:fs").writeFileSync("C:\\Users\\Nour\\AppData\\Local\\Temp\\EFMS_ENTRY_PROOF.txt", "PROOF_AT_" + new Date().toISOString() + "\n");
+} catch(e) {}
 const { app, BrowserWindow, Menu, shell } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const url = require("node:url");
+
+const DIAG_LOG = path.join(require("node:os").tmpdir(), "efms-diagnostic.log");
+function diagLog(msg) {
+  try {
+    fs.appendFileSync(DIAG_LOG, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch (e) {}
+}
+diagLog("MAIN_PROCESS_BOOT: electron ver=" + process.versions.electron);
+process.on("uncaughtException", (err) => {
+  diagLog(`UNCAUGHT_EXCEPTION: ${err ? err.stack || err.message : err}`);
+});
+process.on("unhandledRejection", (reason) => {
+  diagLog(`UNHANDLED_REJECTION: ${reason ? reason.stack || reason.message : reason}`);
+});
 
 const DIST = path.join(__dirname, "..", "dist");
 
@@ -50,60 +67,102 @@ function handler(req, res) {
 
   // منع الخروج من مجلد dist
   const target = path.join(DIST, pathname);
+  diagLog(`HTTP_REQ: ${req.method} ${pathname} -> target: ${target}`);
   if (target !== DIST && !target.startsWith(DIST + path.sep)) {
+    diagLog(`HTTP_403_FORBIDDEN: ${target}`);
     return send(res, 403, "forbidden", "text/plain; charset=utf-8");
   }
 
   if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+    diagLog(`HTTP_200_FILE: ${target}`);
     return send(res, 200, readFileSafe(target), MIME[path.extname(target).toLowerCase()] || "application/octet-stream");
   }
 
   // أروضة الـ SPA: أي مسار غير ملف حقيقي يرجّع الصفحة الرئيسية
   const index = readFileSafe(path.join(DIST, "index.html"));
   if (!index) {
+    diagLog(`HTTP_500_NO_INDEX: ${path.join(DIST, "index.html")}`);
     return send(res, 500, "لم يتم بناء الواجهة — شغّل npm run build قبل تشغيل التطبيق", "text/plain; charset=utf-8");
   }
+  diagLog(`HTTP_200_SPA_FALLBACK: ${pathname}`);
   return send(res, 200, index, MIME[".html"]);
 }
 
 /**
- * منفذ ثابت قدر الإمكان: التخزين المحلي (token + عنوان السيرفر + طابور الأوفلاين) مرتبط بـ origin،
- * ومنفذ عشوائي يعني بداية جهاز فارغ كل تشغيل.
+ * منفذ ثابت إلزامي (Authoritative Desktop Origin):
+ * http://127.0.0.1:43124
+ * التخزين المحلي (token + طابور الأوفلاين IndexedDB) مقيّد تماماً بهذا الـ Origin.
+ * يُمنع منعاً باتاً الانتقال لأي منفذ بديل أو منفذ عشوائي (0).
  */
-const PREFERRED_PORTS = [43124, 43125, 43126, 43127];
+const AUTHORITATIVE_PORT = 43124;
 
-function listenOn(server, port) {
+function startServer() {
   return new Promise((resolve, reject) => {
-    const onError = (err) => reject(err);
-    server.once("error", onError);
-    server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", onError);
-      resolve(server);
-    });
-  });
-}
+    const server = http.createServer(handler);
+    let resolved = false;
 
-async function startServer() {
-  const server = http.createServer(handler);
-  for (const port of PREFERRED_PORTS) {
-    try {
-      await listenOn(server, port);
-      return server;
-    } catch {
-      // منفذ مشغول: جرّب التالي
-    }
-  }
-  return listenOn(server, 0);
+    const onError = (err) => {
+      server.removeListener("listening", onListening);
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    };
+
+    const onListening = () => {
+      server.removeListener("error", onError);
+      if (!resolved) {
+        resolved = true;
+        resolve(server);
+      }
+    };
+
+    server.once("error", onError);
+    server.once("listening", () => {
+      diagLog(`SERVER_LISTENING_PORT: ${AUTHORITATIVE_PORT}`);
+      onListening();
+    });
+    diagLog(`SERVER_STARTING_ON_PORT: ${AUTHORITATIVE_PORT}`);
+    server.listen(AUTHORITATIVE_PORT, "127.0.0.1");
+  });
 }
 
 let mainWindow = null;
+let activeServer = null;
 
-async function createWindow() {
-  const server = await startServer().catch((err) => {
-    dialogError(`تعذّر تشغيل خادم الواجهة المحلي: ${err.message}`);
-    throw err;
-  });
-  const entry = `http://127.0.0.1:${server.address().port}/`;
+function showPortConflictDialog() {
+  const { dialog } = require("electron");
+  const message =
+    "تعذّر تشغيل نظام قاصد خير لأن المنفذ الأساسي (43124) مستخدم بواسطة برنامج آخر. " +
+    "حفاظاً على بياناتك المحلية، لن يتم تشغيل التطبيق باستخدام منفذ بديل. " +
+    "أغلق البرنامج الذي يستخدم المنفذ ثم حاول تشغيل EFMS مرة أخرى.";
+  dialog.showErrorBox("تعذر بدء تشغيل EFMS", message);
+}
+
+function showUnexpectedServerError(err) {
+  const { dialog } = require("electron");
+  dialog.showErrorBox(
+    "خطأ في خادم الواجهة المحلي",
+    `حدث خطأ غير متوقع أثناء تشغيل خادم الواجهة المحلي:\n${err && err.message ? err.message : String(err)}`
+  );
+}
+
+async function startApplication() {
+  let server;
+  try {
+    server = await startServer();
+  } catch (err) {
+    if (err && err.code === "EADDRINUSE") {
+      showPortConflictDialog();
+    } else {
+      showUnexpectedServerError(err);
+    }
+    app.quit();
+    return;
+  }
+
+  activeServer = server;
+  const entry = `http://127.0.0.1:${AUTHORITATIVE_PORT}/`;
 
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -121,23 +180,51 @@ async function createWindow() {
     },
   });
 
+  mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
+    diagLog(`RENDERER_DID_FAIL_LOAD: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+  });
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    diagLog(`RENDER_PROCESS_GONE: reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+  mainWindow.webContents.on("console-message", (event, level, message, line, sourceId) => {
+    diagLog(`RENDERER_CONSOLE: [lvl ${level}] ${message} (${sourceId}:${line})`);
+  });
+
   Menu.setApplicationMenu(null);
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.once("ready-to-show", () => {
+    if (mainWindow) {
+      mainWindow.show();
+    }
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url: link }) => {
     shell.openExternal(link);
     return { action: "deny" };
   });
-  await mainWindow.loadURL(entry);
+
+  // مسح تسجيلات Service Worker وكاش أصوله فقط (دون IndexedDB أو localStorage) حتى لا يقدّم SW القديم حزمة قديمة معطوبة عند أول تشغيل بعد التحديث؛ الخادم المحلي هو مصدر الحقيقة دائماً
+  try {
+    await mainWindow.webContents.session.clearStorageData({
+      origin: `http://127.0.0.1:${AUTHORITATIVE_PORT}`,
+      storages: ["serviceworkers", "cachestorage"],
+    });
+  } catch {
+    // فشل التنظيف لا يمنع التشغيل
+  }
+
+  try {
+    await mainWindow.loadURL(entry);
+  } catch (err) {
+    // نافذة أغلقت أثناء التحميل أو حدث خطأ في الشبكة
+    console.error("Failed to load application URL:", err);
+  }
+
+  // [DIAGNOSTIC] فتح DevTools لرؤية أخطاء الـ renderer — يجب إزالته قبل الإصدار النهائي
+  mainWindow.webContents.openDevTools({ mode: "detach" });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
-    server.close();
   });
-}
-
-function dialogError(message) {
-  const { dialog } = require("electron");
-  if (app.isReady()) dialog.errorBox({ title: "EFMS", message });
-  else app.once("ready", () => dialog.errorBox({ title: "EFMS", message }));
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -151,13 +238,28 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
-    void createWindow();
+    void startApplication();
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+      if (BrowserWindow.getAllWindows().length === 0 && activeServer) {
+        void startApplication();
+      }
     });
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    if (activeServer) {
+      activeServer.close();
+      activeServer = null;
+    }
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  app.on("will-quit", () => {
+    if (activeServer) {
+      activeServer.close();
+      activeServer = null;
+    }
   });
 }

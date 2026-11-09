@@ -56,6 +56,15 @@ function config() {
   if (!baseUrl) {
     throw new ManagersApiError("لم يتم إعداد رابط نظام المدرين (MANAGERS_API_URL)", 501);
   }
+  // المسارات بتتبنى بإلحاق /requisitions/... على الأساس — أساس غلط بيوصل كـ 404 من المدرين
+  // ويُقرأ كأن النظام معطّل. نرفض هنا باسم المتغير، وبنطبع المسار بس من غير النطاق.
+  if (!/\/api$/i.test(baseUrl)) {
+    const pathOnly = baseUrl.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "") || "/";
+    throw new ManagersApiError(
+      `إعداد MANAGERS_API_URL غلط: لازم يكون أساس الـ API وينتهي بـ /api، والمسار الحالي «${pathOnly}» بيرفضه نظام المدرين (404)`,
+      501
+    );
+  }
   const token = (process.env.MANAGERS_API_TOKEN || "").trim();
   if (!token) {
     throw new ManagersApiError("لم يتم إعداد مفتاح نظام المدرين (MANAGERS_API_TOKEN)", 501);

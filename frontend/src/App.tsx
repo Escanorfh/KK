@@ -17,11 +17,16 @@ import UsersPage from "./pages/users/UsersPage";
 import DataManagementPage from "./pages/data-management/DataManagementPage";
 import AppLayout from "./components/layout/AppLayout";
 import RequireAuth from "./components/RequireAuth";
+import ReloadPrompt from "./components/ReloadPrompt";
+import InstallPrompt from "./components/InstallPrompt";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
+    <>
+      <ReloadPrompt />
+      <InstallPrompt />
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
       <Route
         element={
           <RequireAuth>
@@ -69,5 +74,6 @@ export default function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-  );
+  </>
+);
 }

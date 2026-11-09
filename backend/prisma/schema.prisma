@@ -4,7 +4,7 @@ generator client {
   // Vercel بيبني على Debian (1.1) لكن الـFunction بتشتغل على Amazon Linux 2023 (rhel-openssl-3.0.x)
   // — من غير الهدف ده الـclient بيتولّد لـdebian وبيفشل وقت التشغيل: «could not locate the Query Engine».
   // Wasmer لسه محتاجة debian-openssl-1.1.x.
-  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"]
+  binaryTargets   = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -21,12 +21,14 @@ enum Role {
   ADMIN
   MANAGER
   USER
+
   @@schema("core")
 }
 
 enum WorkType {
   MAINTENANCE
   REPAIR
+
   @@schema("core")
 }
 
@@ -35,6 +37,7 @@ enum WorkStatus {
   IN_PROGRESS
   DONE
   WAITING_PARTS
+
   @@schema("core")
 }
 
@@ -45,6 +48,7 @@ enum RepairOrderStatus {
   REPAIRED
   LOADED
   RETURNED
+
   @@schema("core")
 }
 
@@ -52,6 +56,7 @@ enum Condition {
   GOOD
   BROKEN
   STOPPED
+
   @@schema("core")
 }
 
@@ -59,6 +64,7 @@ enum TrackingMode {
   HOURS
   KM
   BOTH
+
   @@schema("core")
 }
 
@@ -66,6 +72,7 @@ enum NeedRequestStatus {
   DRAFT
   SENT
   FAILED
+
   @@schema("core")
 }
 
@@ -87,6 +94,7 @@ model User {
   needRequestsCreated NeedRequest[]
   projects            UserProject[]
   oilConsumptions     OilConsumption[]
+
   @@schema("core")
 }
 
@@ -98,12 +106,16 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  sectors      Sector[]
-  equipment    Equipment[]
-  faults       Fault[]
-  repairOrders RepairOrder[]
-  needRequests NeedRequest[]
-  users        UserProject[]
+  sectors        Sector[]
+  projectSectors ProjectSector[]
+  equipment      Equipment[]
+  faults         Fault[]
+  repairOrders   RepairOrder[]
+  needRequests   NeedRequest[]
+  dailyLogs      DailyLog[]
+  maintenance    Maintenance[]
+  users          UserProject[]
+
   @@schema("core")
 }
 
@@ -118,19 +130,43 @@ model UserProject {
   @@schema("core")
 }
 
-model Sector {
-  id        Int     @id @default(autoincrement())
-  projectId Int
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String
-  /// معرّف قطاع نظام المدرين (room_id) — بيبقى null للقطاعات غير المربوطة؛ الربط مراجعة يدوية مش تشابه أسماء
-  managersRoomId   Int?
-  managersRoomTitle String?
+model ProjectSector {
+  id             Int      @id @default(autoincrement())
+  projectId      Int
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sectorId       Int
+  sector         Sector   @relation(fields: [sectorId], references: [id], onDelete: Restrict)
+  normalizedName String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  equipment    Equipment[]
-  faults       Fault[]
   repairOrders RepairOrder[]
   needRequests NeedRequest[]
+  faults       Fault[]
+
+  @@unique([projectId, sectorId])
+  @@unique([projectId, normalizedName])
+  @@index([sectorId])
+  @@schema("core")
+}
+
+model Sector {
+  id                Int      @id @default(autoincrement())
+  projectId         Int?
+  project           Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name              String
+  /// معرّف قطاع نظام المدرين (room_id) — بيبقى null للقطاعات غير المربوطة؛ الربط مراجعة يدوية مش تشابه أسماء
+  managersRoomId    Int?
+  managersRoomTitle String?
+
+  projectSectors ProjectSector[]
+  equipment      Equipment[]
+  faults         Fault[]
+  repairOrders   RepairOrder[]
+  needRequests   NeedRequest[]
+  dailyLogs      DailyLog[]
+  maintenance    Maintenance[]
 
   @@unique([projectId, name])
   @@schema("core")
@@ -145,6 +181,7 @@ model EquipmentCategory {
   updatedAt           DateTime     @updatedAt
 
   equipment Equipment[]
+
   @@schema("core")
 }
 
@@ -166,14 +203,15 @@ model Equipment {
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
-  dailyLogs     DailyLog[]
-  maintenance   Maintenance[]
-  oilSchedules  OilSchedule[]
-  partSchedules PartSchedule[]
-  meterResets   MeterReset[]
-  faults        Fault[]
-  repairOrders  RepairOrder[]
+  dailyLogs       DailyLog[]
+  maintenance     Maintenance[]
+  oilSchedules    OilSchedule[]
+  partSchedules   PartSchedule[]
+  meterResets     MeterReset[]
+  faults          Fault[]
+  repairOrders    RepairOrder[]
   oilConsumptions OilConsumption[]
+
   @@schema("core")
 }
 
@@ -199,6 +237,8 @@ model RepairOrder {
   project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
   sectorId               Int?
   sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  projectSectorId        Int?
+  projectSector          ProjectSector?     @relation(fields: [projectSectorId], references: [id], onDelete: Restrict)
   equipmentId            Int
   equipment              Equipment          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
   entryDate              DateTime?          @db.Date
@@ -238,6 +278,7 @@ model RepairOrder {
   createdBy              User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
+
   @@schema("ops")
 }
 
@@ -250,6 +291,7 @@ model RepairPart {
   qty           Float?
   notes         String?
   createdAt     DateTime    @default(now())
+
   @@schema("ops")
 }
 
@@ -262,6 +304,7 @@ model RepairOrderEvent {
   user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   note          String?
   createdAt     DateTime          @default(now())
+
   @@schema("ops")
 }
 
@@ -272,6 +315,8 @@ model NeedRequest {
   project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   sectorId         Int?
   sector           Sector?           @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  projectSectorId  Int?
+  projectSector    ProjectSector?    @relation(fields: [projectSectorId], references: [id], onDelete: Restrict)
   department       String
   requestDate      DateTime          @db.Date
   status           NeedRequestStatus @default(DRAFT)
@@ -286,6 +331,7 @@ model NeedRequest {
   createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+
   @@schema("ops")
 }
 
@@ -304,6 +350,7 @@ model NeedRequestItem {
   foreignSupply  Float?
   notes          String?
   createdAt      DateTime    @default(now())
+
   @@schema("ops")
 }
 
@@ -324,6 +371,11 @@ model DailyLog {
   condition         Condition?
   conditionNote     String?
   notes             String?
+  projectId         Int?
+  project           Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId          Int?
+  sector            Sector?    @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  contextSource     String?
   userId            Int?
   user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt         DateTime   @default(now())
@@ -334,12 +386,12 @@ model DailyLog {
 }
 
 model Maintenance {
-  id              Int        @id @default(autoincrement())
+  id              Int              @id @default(autoincrement())
   workOrderNo     Int?
-  date            DateTime   @db.Date
-  endDate         DateTime?  @db.Date
+  date            DateTime         @db.Date
+  endDate         DateTime?        @db.Date
   equipmentId     Int
-  equipment       Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipment       Equipment        @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
   workType        WorkType
   orderType       String?
   maintenanceType String?
@@ -350,14 +402,21 @@ model Maintenance {
   meterReading    Float?
   kmMeter         Float?
   downtime        Float?
-  status          WorkStatus @default(NEW)
+  status          WorkStatus       @default(NEW)
   notes           String?
+  projectId       Int?
+  project         Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId        Int?
+  sector          Sector?          @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  contextSource   String?
+  operationId     String?          @unique
   userId          Int?
-  user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   workParts       WorkPart[]
   oilConsumptions OilConsumption[]
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
   @@schema("ops")
 }
 
@@ -370,6 +429,7 @@ model WorkPart {
   qty           Float?
   notes         String?
   createdAt     DateTime    @default(now())
+
   @@schema("ops")
 }
 
@@ -380,6 +440,7 @@ enum OilType {
   STEERING
   GEARBOX
   OTHER
+
   @@schema("core")
 }
 
@@ -387,15 +448,16 @@ enum OilType {
 enum OilSource {
   MANUAL
   MAINTENANCE
+
   @@schema("core")
 }
 
 /// قيد استهلاك زيت — إما إدخال يدوي أو مستورد تلقائيًا من صيانة (WorkPart فيها اسم زيت)
 model OilConsumption {
-  id            Int         @id @default(autoincrement())
-  date          DateTime    @db.Date
+  id            Int          @id @default(autoincrement())
+  date          DateTime     @db.Date
   equipmentId   Int
-  equipment     Equipment   @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  equipment     Equipment    @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
   oilType       OilType
   /// اسم الزيت الحر (مثال: "shell rimula 15w40") — اختياري للتفصيل
   oilName       String?
@@ -405,15 +467,15 @@ model OilConsumption {
   pricePerLiter Float?
   /// الإجمالي = liters × pricePerLiter (يُحتسب تلقائيًا)
   totalAmount   Float?
-  source        OilSource   @default(MANUAL)
+  source        OilSource    @default(MANUAL)
   /// مرجع أمر الصيانة لو القيد مستورد تلقائيًا
   maintenanceId Int?
   maintenance   Maintenance? @relation(fields: [maintenanceId], references: [id], onDelete: SetNull)
   notes         String?
   userId        Int?
-  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([equipmentId, date])
   @@index([oilType])
@@ -454,22 +516,25 @@ model PartSchedule {
 }
 
 model Fault {
-  id            Int        @id @default(autoincrement())
-  date          DateTime   @db.Date
-  projectId     Int?
-  project       Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  sectorId      Int?
-  sector        Sector?    @relation(fields: [sectorId], references: [id], onDelete: SetNull)
-  equipmentId   Int
-  equipment     Equipment  @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  description   String
-  cause         String?
-  faultType     String?
-  downtimeHours Float?
-  actionTaken   String?
-  status        WorkStatus @default(NEW)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id              Int            @id @default(autoincrement())
+  date            DateTime       @db.Date
+  projectId       Int?
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId        Int?
+  sector          Sector?        @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  projectSectorId Int?
+  projectSector   ProjectSector? @relation(fields: [projectSectorId], references: [id], onDelete: Restrict)
+  equipmentId     Int
+  equipment       Equipment      @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  description     String
+  cause           String?
+  faultType       String?
+  downtimeHours   Float?
+  actionTaken     String?
+  status          WorkStatus     @default(NEW)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
   @@schema("ops")
 }
 
@@ -482,21 +547,22 @@ model AuditLog {
   action    String
   details   Json?
   createdAt DateTime @default(now())
+
   @@schema("log")
 }
 
 /// سجل استيراد شيتات الإكسل — يتيح حذف بيانات شيت بعينه لاحقًا
 model ImportLog {
-  id        Int      @id @default(autoincrement())
-  entity    String
-  fileName  String
-  sheetName String
-  created   Int      @default(0)
-  updated   Int      @default(0)
-  skipped   Int      @default(0)
+  id         Int      @id @default(autoincrement())
+  entity     String
+  fileName   String
+  sheetName  String
+  created    Int      @default(0)
+  updated    Int      @default(0)
+  skipped    Int      @default(0)
   /// معرّفات السجلات التي أنشأها هذا الاستيراد (للحذف الانتقائي)
   createdIds Json?
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([entity])
   @@schema("log")

@@ -18,8 +18,6 @@ win:
   signAndEditExecutable: false
   target:
     - target: nsis
-      arch:
-        - x64
 nsis:
   oneClick: false
   perMachine: false
@@ -27,4 +25,4 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: EFMS
-  artifactName: EFMS-Setup-${version}.${ext}
+  artifactName: EFMS-Setup-${arch}.${ext}

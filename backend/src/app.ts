@@ -216,7 +216,10 @@ app.use(
     // «خطأ غير متوقع» ما بتقولش للمنفّذ يعمل إيه — اسم العمود وملف الترحيل بيقفلوا الشكوى.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2022") {
       const meta = err.meta as { model?: string; modelName?: string; column?: string } | undefined;
-      const column = [meta?.model ?? meta?.modelName, meta?.column].filter(Boolean).join(".");
+      const rawColumn = meta?.column ?? "";
+      const model = meta?.model ?? meta?.modelName ?? "";
+      // Prisma بيبعته أحيانًا «Sector.managersRoomId» وأحيانًا اسم العمود بس مع اسم الموديل
+      const column = rawColumn.includes(".") ? rawColumn : [model, rawColumn].filter(Boolean).join(".");
       return res.status(500).json({
         message: `بنية قاعدة البيانات أقدم من كود السيرفر${
           column ? ` — العمود «${column}» غير موجود` : ""

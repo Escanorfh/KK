@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       includeAssets: ["apple-touch-icon.png"],
       manifest: {
         name: "نظام متابعة المعدات والصيانة — EFMS",

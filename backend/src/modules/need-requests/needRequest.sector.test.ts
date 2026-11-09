@@ -523,3 +523,18 @@ test("١١) توكن مرفوض (401) → الرسالة بسمّي MANAGERS_API
   assert.match(err!.message, /MANAGERS_API_TOKEN/);
   assert.doesNotMatch(err!.message, /revoked-or-expired-token/, "مافيش توكن في نص الخطأ");
 });
+
+test("١٢) MANAGERS_API_URL مش أساس الـ API → رفض باسم المتغير بدون طباعة النطاق", async () => {
+  await startMockManagers();
+  const managers = await import("../../utils/managers.js");
+  const previous = process.env.MANAGERS_API_URL;
+  process.env.MANAGERS_API_URL = "https://host-not-shown.example/admin/api-tokens";
+
+  const err = await managers.managersProjects(true).then(() => null, (e: unknown) => e as Error);
+  process.env.MANAGERS_API_URL = previous;
+
+  assert.ok(err, "لازم يترفض قبل ما يبعت طلب يطلع 404");
+  assert.match(err!.message, /MANAGERS_API_URL/);
+  assert.match(err!.message, /\/admin\/api-tokens/);
+  assert.doesNotMatch(err!.message, /host-not-shown/, "النطاق ما بيتطبعش في رسالة الخطأ");
+});

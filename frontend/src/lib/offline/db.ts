@@ -8,6 +8,7 @@ const KV_LIMIT = 300;
 
 export interface OutboxItem {
   id?: number;
+  userId?: number | "LEGACY_UNASSIGNED" | null;
   kind: string;
   method: "post" | "put";
   url: string;

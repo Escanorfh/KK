@@ -126,11 +126,14 @@ export async function linkManagersRoom(id: number, managersRoomId: number | null
     return cleared;
   }
 
+  if (sector.projectId == null) {
+    fail("القطاع غير مربوط بمشروع — cannot link managers room without project", 422);
+  }
   const { rooms } = await managersRooms(sector.projectId);
   const room = rooms.find((item) => item.id === managersRoomId);
   if (!room) {
     fail(
-      `قطاع نظام المدرين بمعرّف ${managersRoomId} ليس ضمن القطاعات المصرّح بها لمشروع «${sector.project.name}»`,
+      `قطاع نظام المدرين بمعرّف ${managersRoomId} ليس ضمن القطاعات المصرّح بها لمشروع «${sector.project?.name ?? ""}»`,
       422
     );
   }

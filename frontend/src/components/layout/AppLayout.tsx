@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -85,8 +86,15 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    const success = await logout();
+    if (!success) {
+      toast.error(
+        "يوجد عمليات محفوظة لم تُرسل بعد — أرسلها أو تجاهلها من «حالة الاتصال» قبل تسجيل الخروج",
+        { duration: 5000 },
+      );
+      return;
+    }
     navigate("/login", { replace: true });
   };
 
