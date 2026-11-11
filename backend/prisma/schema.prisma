@@ -157,6 +157,7 @@ model Project {
   needRequests   NeedRequest[]
   dailyLogs      DailyLog[]
   maintenance    Maintenance[]
+  assignments    EquipmentAssignment[]
   users          UserProject[]
 
   @@schema("core")
@@ -187,6 +188,7 @@ model ProjectSector {
   repairOrders RepairOrder[]
   needRequests NeedRequest[]
   faults       Fault[]
+  assignments  EquipmentAssignment[]
 
   @@unique([projectId, sectorId])
   @@unique([projectId, normalizedName])
@@ -210,6 +212,7 @@ model Sector {
   needRequests   NeedRequest[]
   dailyLogs      DailyLog[]
   maintenance    Maintenance[]
+  assignments    EquipmentAssignment[]
 
   @@unique([projectId, name])
   @@schema("core")
@@ -254,8 +257,37 @@ model Equipment {
   faults          Fault[]
   repairOrders    RepairOrder[]
   oilConsumptions OilConsumption[]
+  assignments     EquipmentAssignment[]
 
   @@schema("core")
+}
+
+/// Equipment assignment history with an effective interval.
+///
+/// System Managers is the source of truth for projects/sectors but exposes only
+/// the CURRENT assignment (GET /equipments). It provides no transfer dates, so
+/// rows here are recorded only when EFMS observes a change, with effectiveFrom
+/// set to the observation time. Nothing is ever backdated.
+model EquipmentAssignment {
+  id              Int            @id @default(autoincrement())
+  equipmentId     Int
+  equipment       Equipment      @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  projectId       Int?
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sectorId        Int?
+  sector          Sector?        @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  projectSectorId Int?
+  projectSector   ProjectSector? @relation(fields: [projectSectorId], references: [id], onDelete: SetNull)
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+  sourceSystem    String
+  sourceReference String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([equipmentId, effectiveFrom])
+  @@index([equipmentId, effectiveTo])
+  @@schema("ops")
 }
 
 model MeterReset {

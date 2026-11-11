@@ -114,6 +114,24 @@ export async function createMeterReset(
   return data;
 }
 
+export interface EquipmentAssignment {
+  id: number;
+  projectId: number | null;
+  sectorId: number | null;
+  projectSectorId: number | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  sourceSystem: string;
+  sourceReference: string | null;
+  project?: { id: number; code?: string | null; name: string } | null;
+  sector?: { id: number; name: string } | null;
+}
+
+export async function listAssignments(equipmentId: number) {
+  const { data } = await api.get<EquipmentAssignment[]>(`/equipments/${equipmentId}/assignments`);
+  return data;
+}
+
 export async function listEquipments(params: Record<string, unknown> = {}) {
   const { data } = await api.get<Paginated<Equipment>>("/equipments", { params });
   return data;

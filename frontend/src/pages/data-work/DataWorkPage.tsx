@@ -442,7 +442,7 @@ export default function DataWorkPage() {
                       {rec.equipment.name}
                     </td>
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
-                      {rec.projectName || rec.projectCode || "غير محدد"}
+                      {rec.projectName || rec.projectCode || "لم يُسجّل وقت الإنشاء"}
                     </td>
                     <td className={cn(tdCls, "text-xs whitespace-nowrap")}>{rec.orderType || "—"}</td>
                     <td className={cn(tdCls, "text-xs whitespace-nowrap text-slate-600")}>
@@ -588,8 +588,8 @@ export default function DataWorkPage() {
                   detail.endDate ? detail.endDate.slice(0, 10) : "",
                   true
                 )}
-                {dField("المشروع", detail.projectName || detail.projectCode || "غير محدد")}
-                {dField("القطاع", detail.sectorName || "غير محدد")}
+                {dField("المشروع", detail.projectName || detail.projectCode || "لم يُسجّل وقت الإنشاء")}
+                {dField("القطاع", detail.sectorName || "لم يُسجّل")}
                 {dField("نوع أمر الشغل", detail.orderType)}
                 {dField("الورشة", detail.workshop)}
                 {dField("العداد النهائي", detail.meterReading, true)}

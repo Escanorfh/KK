@@ -2,6 +2,7 @@ import type { Prisma, TrackingMode } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { issueAttestation } from "../../utils/attestation";
 import { logAudit } from "../../utils/audit";
+import { ASSIGNMENT_SOURCES, activeProjectSectorId, listAssignments as listAssignmentHistory, recordAssignmentSafe } from "../../utils/assignmentHistory";
 import { resolveTrackingSetup, UNCLASSIFIED_CATEGORY } from "./trackingMode";
 import { scopeOr } from "../../utils/scope";
 import { ensureSectorLink } from "../sectors/sector.service";
@@ -538,6 +539,16 @@ export async function update(
     },
     include: equipmentInclude,
   });
+  if (existing.projectId !== resolved.projectId || existing.sectorId !== resolved.sectorId) {
+    await recordAssignmentSafe({
+      equipmentId: id,
+      projectId: resolved.projectId ?? null,
+      sectorId: resolved.sectorId ?? null,
+      projectSectorId: await activeProjectSectorId(resolved.projectId ?? null, resolved.sectorId ?? null),
+      sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+      sourceReference: `user:${userId}`,
+    });
+  }
   await logAudit(userId, "Equipment", id, "UPDATE", data);
   return equipment;
 }
@@ -797,6 +808,19 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
                 : {}),
             },
           });
+          if (needsProject || needsSector) {
+            await recordAssignmentSafe({
+              equipmentId: existing.id,
+              projectId: needsProject ? projectId : existing.projectId,
+              sectorId: needsSector ? sectorId : existing.sectorId,
+              projectSectorId: await activeProjectSectorId(
+                needsProject ? projectId : existing.projectId,
+                needsSector ? sectorId : existing.sectorId
+              ),
+              sourceSystem: ASSIGNMENT_SOURCES.MANAGERS_SYNC,
+              sourceReference: `equipment:${code}`,
+            });
+          }
           result.updated++;
         } else {
           result.unchanged++;
@@ -845,4 +869,21 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
   });
 
   return result;
+}
+
+export async function listAssignments(equipmentId: number) {
+  const equipment = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { id: true } });
+  if (!equipment) {
+    throw Object.assign(new Error("المعدة غير موجودة"), { status: 404 });
+  }
+  try {
+    return await listAssignmentHistory(equipmentId);
+  } catch (err) {
+    // The manual migration may not be applied yet. Report an empty history
+    // instead of failing the whole equipment page.
+    if ((err as { code?: string }).code === "P2021") {
+      return [];
+    }
+    throw err;
+  }
 }

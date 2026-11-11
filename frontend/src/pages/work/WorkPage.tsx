@@ -472,18 +472,20 @@ export default function WorkPage() {
 
   const editRecord = (rec: Maintenance) => {
     setDate(rec.date.slice(0, 10));
+    // Preserve the record's original snapshot; never rewrite it from the
+    // equipment's current project/sector.
     setForm({
       id: rec.id,
       workOrderNo: rec.workOrderNo != null ? String(rec.workOrderNo) : "",
       equipmentId: rec.equipmentId,
       code: rec.equipment.code,
       equipmentName: rec.equipment.name,
-      projectId: rec.equipment.project?.id ?? null,
-      projectCode: rec.equipment.project?.code ?? null,
-      sectorId: rec.equipment.sector?.id ?? null,
+      projectId: rec.projectId ?? null,
+      projectCode: rec.projectCode ?? null,
+      sectorId: rec.sectorId ?? null,
       attestation: null,
-      projectName: rec.equipment.project?.name || "",
-      sectorName: rec.equipment.sector?.name || "",
+      projectName: rec.projectName || "",
+      sectorName: rec.sectorName || "",
       trackingMode: rec.equipment.trackingMode,
       orderType: rec.orderType || "",
       maintenanceType: rec.maintenanceType || "",

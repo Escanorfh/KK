@@ -118,3 +118,11 @@ export async function trackingReview(_req: Request, res: Response, next: NextFun
     next(err);
   }
 }
+
+export async function listAssignments(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await equipmentService.listAssignments(Number(req.params.id)));
+  } catch (err) {
+    next(err);
+  }
+}

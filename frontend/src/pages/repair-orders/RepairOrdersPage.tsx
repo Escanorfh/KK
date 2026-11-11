@@ -253,7 +253,7 @@ export default function RepairOrdersPage() {
         quantity: rec.quantity ?? 1,
         unit: rec.unit || "عدد",
         itemCondition: (rec.itemCondition as RepairItemCondition) || "عاطلة",
-        siteName: rec.siteName ?? rec.sector?.name ?? rec.equipment.sector?.name ?? null,
+        siteName: rec.siteName ?? rec.sector?.name ?? null,
         requesterName: rec.requesterName ?? rec.createdBy?.name ?? null,
         sourceWarehouseId: rec.sourceWarehouseId ?? null,
         destinationWarehouseId: rec.destinationWarehouseId ?? null,
@@ -1265,11 +1265,11 @@ export default function RepairOrdersPage() {
                   <div className="rounded-lg bg-slate-50 p-3">
                     <p className="text-[11px] text-slate-400 font-semibold">المشروع / القطاع</p>
                     <p className="font-bold text-slate-700">
-                      {selected.project?.name || selected.equipment.project?.name || "—"}
-                      {(selected.sector || selected.equipment.sector) && (
+                      {selected.project?.name || "لم يُسجّل وقت الإنشاء"}
+                      {selected.sector && (
                         <span className="text-slate-500 font-normal">
                           {" "}
-                          · {selected.sector?.name ?? selected.equipment.sector?.name}
+                          · {selected.sector.name}
                         </span>
                       )}
                     </p>
@@ -1496,7 +1496,7 @@ export default function RepairOrdersPage() {
             <tr>
               <td className="border border-black px-2 py-1.5 bg-[#eeeae7] font-bold">المشروع</td>
               <td className="border border-black px-2 py-1.5 text-center">
-                {selected.project?.name || selected.equipment.project?.name || "—"}
+                {selected.project?.name || "لم يُسجّل وقت الإنشاء"}
               </td>
               <td className="border border-black px-2 py-1.5 bg-[#eeeae7] font-bold">تاريخ الدخول</td>
               <td className="border border-black px-2 py-1.5 text-center font-mono">
@@ -1510,7 +1510,7 @@ export default function RepairOrdersPage() {
               </td>
               <td className="border border-black px-2 py-1.5 bg-[#eeeae7] font-bold">القطاع</td>
               <td className="border border-black px-2 py-1.5 text-center">
-                {selected.sector?.name || selected.equipment.sector?.name || "—"}
+                {selected.sector?.name || "لم يُسجّل وقت الإنشاء"}
               </td>
             </tr>
             <tr>

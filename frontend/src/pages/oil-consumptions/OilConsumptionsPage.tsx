@@ -782,7 +782,7 @@ export default function OilConsumptionsPage() {
                       <th className="px-3 py-2 font-bold w-10">م</th>
                       <th className="px-3 py-2 font-bold">التاريخ</th>
                       <th className="px-3 py-2 font-bold">المعدة</th>
-                      <th className="px-3 py-2 font-bold">المشروع</th>
+                      <th className="px-3 py-2 font-bold">المشروع الحالي</th>
                       <th className="px-3 py-2 font-bold">نوع الزيت</th>
                       <th className="px-3 py-2 font-bold">اسم الزيت</th>
                       <th className="px-3 py-2 font-bold">الكمية (لتر)</th>
@@ -1010,7 +1010,7 @@ export default function OilConsumptionsPage() {
                       نوع الزيت
                     </th>
                     <th className="border border-slate-800 px-2 py-2 font-bold text-center w-[130px]">
-                      المشروع
+                      المشروع الحالي
                     </th>
                     <th className="border border-slate-800 px-2 py-2 font-bold text-center w-[90px]">الكود</th>
                     <th className="border border-slate-800 px-2 py-2 font-bold text-center w-[110px]">

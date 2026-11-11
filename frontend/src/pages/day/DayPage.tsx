@@ -394,16 +394,19 @@ export default function DayPage() {
 
   const editRecord = (rec: DailyLog) => {
     setDate(rec.date.slice(0, 10));
+    // Editing must never rewrite the historical snapshot. Use the project/sector
+    // stored on the record itself; never fall back to the equipment's CURRENT
+    // project/sector, which may have changed since the record was created.
     setForm({
       id: rec.id,
       equipmentId: rec.equipmentId,
       code: rec.equipment.code,
       equipmentName: rec.equipment.name,
-      projectId: rec.equipment.project?.id ?? null,
-      projectCode: rec.equipment.project?.code ?? null,
-      sectorId: rec.equipment.sector?.id ?? null,
-      projectName: rec.equipment.project?.name || "",
-      sectorName: rec.equipment.sector?.name || "",
+      projectId: rec.projectId ?? null,
+      projectCode: rec.projectCode ?? null,
+      sectorId: rec.sectorId ?? null,
+      projectName: rec.projectName || "",
+      sectorName: rec.sectorName || "",
       attestation: null,
       trackingMode: rec.equipment.trackingMode,
       endMeter: rec.endMeter != null ? String(rec.endMeter) : "",
@@ -421,6 +424,8 @@ export default function DayPage() {
 
   /** نسخ بيانات معدة من اليوم اللي قبله في فورم اليوم الجديد — بدون id عشان الحفظ يسجّل جديد مش يعدّل */
   const copyRecordToNewDay = (rec: DailyLog) => {
+    // A copy is a NEW operation: capture the equipment's CURRENT assignment
+    // instead of reusing the old record's historical snapshot.
     setForm({
       id: null,
       equipmentId: rec.equipmentId,

@@ -87,6 +87,9 @@ export interface DailyLog {
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;
+  projectId?: number | null;
+  sectorId?: number | null;
+  contextSource?: string | null;
   projectCode?: string | null;
   projectName?: string | null;
   sectorName?: string | null;
@@ -136,6 +139,9 @@ export interface Maintenance {
   downtime?: number | null;
   status: "NEW" | "IN_PROGRESS" | "DONE" | "WAITING_PARTS";
   notes?: string | null;
+  projectId?: number | null;
+  sectorId?: number | null;
+  contextSource?: string | null;
   projectCode?: string | null;
   projectName?: string | null;
   sectorName?: string | null;

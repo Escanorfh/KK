@@ -42,7 +42,9 @@ import {
   listMeterResets,
   createMeterReset,
   listCategories,
+  listAssignments,
   type MeterReset,
+  type EquipmentAssignment,
 } from "@/services/equipments";
 import { projectOptions } from "@/services/projects";
 import {
@@ -81,6 +83,7 @@ interface DetailData {
   maints: Maintenance[];
   faults: { data: Fault[]; total: number };
   resets: MeterReset[];
+  assignments: EquipmentAssignment[];
 }
 
 export default function EquipmentPage() {
@@ -227,12 +230,13 @@ export default function EquipmentPage() {
     setResetKm("");
     setResetNotes("");
     try {
-      const [schedules, daily, maints, faults, resets] = await Promise.all([
+      const [schedules, daily, maints, faults, resets, assignments] = await Promise.all([
         listPartSchedules(eq.id),
         listDailyLogs({ equipmentId: eq.id, page: 1, pageSize: 200 }),
         listMaintenance({ equipmentId: eq.id, page: 1, pageSize: 200 }),
         listFaults({ equipmentId: eq.id, page: 1, pageSize: 200 }),
         listMeterResets(eq.id),
+        listAssignments(eq.id).catch(() => [] as EquipmentAssignment[]),
       ]);
       setDetail({
         schedules,
@@ -240,6 +244,7 @@ export default function EquipmentPage() {
         maints: maints.data,
         faults: { data: faults.data, total: faults.total },
         resets,
+        assignments,
       });
       await reloadAlert(eq);
     } catch (err) {
@@ -735,6 +740,53 @@ export default function EquipmentPage() {
                   </div>
                 </div>
                 {serviceCards(selected.trackingMode)}
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600">
+                    سجل تخصيص المعدة (المشروع والقطاع)
+                  </div>
+                  <div className="px-3 py-2 text-xs text-slate-600 flex flex-wrap gap-x-4 gap-y-1">
+                    <span>
+                      التخصيص الحالي:{" "}
+                      <b className="text-slate-800">
+                        {selected.project?.name || "بدون مشروع"} — {selected.sector?.name || "بدون قطاع"}
+                      </b>
+                    </span>
+                  </div>
+                  {detail.assignments.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-amber-700 bg-amber-50 border-t border-amber-100">
+                      لا يوجد تاريخ تخصيص مسجّل — التخصيص الحالي أعلاه وليس دليلًا تاريخيًا. السجلات القديمة تبقى «لم يُسجّل وقت الإنشاء».
+                    </div>
+                  ) : (
+                    <table className="w-full border-collapse border-t border-slate-200">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          <th className={thCls}>من</th>
+                          <th className={thCls}>إلى</th>
+                          <th className={thCls}>المشروع</th>
+                          <th className={thCls}>القطاع</th>
+                          <th className={thCls}>المصدر</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.assignments.map((a) => (
+                          <tr key={a.id}>
+                            <td className={cn(tdCls, "font-mono text-xs")} dir="ltr">
+                              {day(a.effectiveFrom)}
+                            </td>
+                            <td className={cn(tdCls, "font-mono text-xs")} dir="ltr">
+                              {a.effectiveTo ? day(a.effectiveTo) : "الحالي"}
+                            </td>
+                            <td className={cn(tdCls, "text-xs")}>{a.project?.name || "بدون مشروع"}</td>
+                            <td className={cn(tdCls, "text-xs")}>{a.sector?.name || "بدون قطاع"}</td>
+                            <td className={cn(tdCls, "text-xs text-slate-500")} dir="ltr">
+                              {a.sourceSystem}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
                 <p className="text-[11px] text-slate-400">
                   الخلاصة: <b className="text-slate-600">{summaryText}</b> — وضع التتبع:{" "}
                   <b className="text-slate-600">{TRACKING_MODE_LABELS[selected.trackingMode]}</b> — كل التفاصيل في تبويب «الزيوت والفلاتر».

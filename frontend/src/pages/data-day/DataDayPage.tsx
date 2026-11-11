@@ -360,7 +360,7 @@ export default function DataDayPage() {
                       {rec.equipment.name}
                     </td>
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
-                      {rec.projectName || rec.projectCode || "غير محدد"}
+                      {rec.projectName || rec.projectCode || "لم يُسجّل وقت الإنشاء"}
                     </td>
                     <td className={cn(tdCls, "text-center")}>{num(rec.endMeter)}</td>
                     <td className={cn(tdCls, "text-center font-semibold")}>

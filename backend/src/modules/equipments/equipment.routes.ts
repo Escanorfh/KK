@@ -48,6 +48,7 @@ router.get(
   validateQuery(lastMeterQuerySchema),
   equipmentController.lastMeter
 );
+router.get("/:id/assignments", equipmentController.listAssignments);
 router.get("/:id/meter-resets", equipmentController.listMeterResets);
 router.post(
   "/:id/meter-resets",
