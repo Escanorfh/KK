@@ -14,6 +14,7 @@ interface ColFilters {
   code: string;
   name: string;
   projectId: string;
+  sector: string;
   meterEndFrom: string;
   meterEndTo: string;
   hoursFrom: string;
@@ -34,6 +35,7 @@ const emptyFilters: ColFilters = {
   code: "",
   name: "",
   projectId: "",
+  sector: "",
   meterEndFrom: "",
   meterEndTo: "",
   hoursFrom: "",
@@ -86,6 +88,7 @@ export default function DataDayPage() {
       if (v !== undefined) params[param] = v;
     }
     if (filters.projectId) params.projectId = filters.projectId;
+    if (filters.sector) params.sector = filters.sector;
     const nums: [keyof ColFilters, string][] = [
       ["meterEndFrom", "meterEndFrom"],
       ["meterEndTo", "meterEndTo"],
@@ -216,6 +219,7 @@ export default function DataDayPage() {
                 <th className={thCls}>الكود</th>
                 <th className={thCls}>اسم المعدة</th>
                 <th className={thCls}>المشروع</th>
+                <th className={thCls}>القطاع</th>
                 <th className={cn(thCls, "text-center")}>نهاية</th>
                 <th className={cn(thCls, "text-center")}>ساعات</th>
                 <th className={cn(thCls, "text-center")}>ديزل</th>
@@ -277,7 +281,15 @@ export default function DataDayPage() {
                     ))}
                   </select>
                 </td>
-                <td className={tfCls}>{rangeCell("meterEndFrom", "meterEndTo")}</td>
+                <td className={tfCls}>
+                   <input
+                     value={filters.sector}
+                     onChange={(e) => setF("sector", e.target.value)}
+                     placeholder="بحث..."
+                     className={fInput}
+                   />
+                 </td>
+                 <td className={tfCls}>{rangeCell("meterEndFrom", "meterEndTo")}</td>
                 <td className={tfCls}>{rangeCell("hoursFrom", "hoursTo", "any")}</td>
                 <td className={tfCls}>{rangeCell("dieselFrom", "dieselTo", "any")}</td>
                 <td className={tfCls}>
@@ -333,14 +345,14 @@ export default function DataDayPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} className="px-4 py-10 text-center text-slate-400 text-sm">
+                  <td colSpan={14} className="px-4 py-10 text-center text-slate-400 text-sm">
                     <Loader2 size={18} className="animate-spin inline ml-2" />
                     جاري تحميل السجلات...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-4 py-10 text-center text-slate-400 text-sm">
+                  <td colSpan={14} className="px-4 py-10 text-center text-slate-400 text-sm">
                     لا توجد سجلات مطابقة
                   </td>
                 </tr>
@@ -360,8 +372,9 @@ export default function DataDayPage() {
                       {rec.equipment.name}
                     </td>
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
-                      {rec.projectName || rec.projectCode || "لم يُسجّل وقت الإنشاء"}
+                      {rec.projectName || rec.projectCode || "غير محدد"}
                     </td>
+                    <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>{rec.sectorName || "غير محدد"}</td>
                     <td className={cn(tdCls, "text-center")}>{num(rec.endMeter)}</td>
                     <td className={cn(tdCls, "text-center font-semibold")}>
                       {num(rec.operatingHours)}

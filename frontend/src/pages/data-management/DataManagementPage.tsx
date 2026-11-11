@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn, todayLocal } from "@/lib/utils";
 import { api, getApiError } from "@/lib/api";
+import { readDailyLogPreview } from "@/lib/excelImport";
 
 type ImportEntity = "projects" | "equipments" | "dailylogs" | "maintenance" | "partschedules";
 
@@ -26,6 +27,7 @@ interface ImportResult {
   updated: number;
   skipped: number;
   errors: { row: number; message: string }[];
+  warnings?: string[];
 }
 
 interface Stats {
@@ -160,6 +162,18 @@ export default function DataManagementPage() {
   const [lastResult, setLastResult] = useState<{ entity: string; result: ImportResult } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [sheetDialog, setSheetDialog] = useState<SheetDialog | null>(null);
+  const [wbState, setWbState] = useState<XLSX.WorkBook | null>(null);
+  const [sheetPreview, setSheetPreview] = useState<any>(null);
+  useEffect(() => {
+    if (!sheetDialog || !wbState || sheetDialog.entity !== "dailylogs") {
+      setSheetPreview(null);
+      return;
+    }
+    const ws = wbState.Sheets[sheetDialog.chosen];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
+    setSheetPreview(readDailyLogPreview(rows));
+  }, [sheetDialog?.chosen, wbState, sheetDialog?.entity]);
+
   const [imports, setImports] = useState<ImportLogRow[]>([]);
   const [importsError, setImportsError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -251,6 +265,7 @@ export default function DataManagementPage() {
       });
       setLastResult({ entity, result: data });
       toast.success(`تم الاستيراد: ${data.created} جديد — ${data.updated} تحديث — ${data.skipped} تخطي`);
+      if (data.warnings?.length) toast(`تحذيرات: ${data.warnings.join(" | ")}`, { duration: 6000 });
       loadStats();
       loadImports();
     } catch (err) {
@@ -265,16 +280,20 @@ export default function DataManagementPage() {
     e.target.value = "";
     const entity = pendingEntity.current;
     if (!file || !entity) return;
-    if (/\.csv$/i.test(file.name)) {
-      await doImport(entity, file);
-      return;
-    }
     setBusy(`import:${entity}`);
     try {
-      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      let wb: XLSX.WorkBook;
+      if (/\.csv$/i.test(file.name)) {
+        wb = XLSX.read(await file.text(), { type: "string" });
+      } else {
+        wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      }
+      setWbState(wb);
       const sheets = wb.SheetNames;
       if (sheets.length > 1) {
         setSheetDialog({ entity, file, sheets, chosen: pickDefaultSheet(wb, entity, sheets) });
+      } else if (entity === "dailylogs") {
+        setSheetDialog({ entity, file, sheets, chosen: sheets[0] });
       } else {
         await doImport(entity, file, sheets[0]);
       }
@@ -743,6 +762,37 @@ export default function DataManagementPage() {
               الشيت المناسب للجدول ده متحدد تلقائيًا — لو عايز شيت تاني (مثلاً Sheet2 للسجل التاريخي القديم)
               غيّره من القائمة واستورد كل شيت على حدة.
             </p>
+            {sheetDialog.entity === "dailylogs" && sheetPreview && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2 text-[11px]">
+                <p className="font-bold text-slate-700">معاينة أعمدة المشروع/القطاع (Data Day)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-slate-500">عمود المشروع:</span>{" "}
+                    <b className="text-slate-800">{sheetPreview.projectNameHeader || sheetPreview.projectCodeHeader || "—"}</b>
+                    {sheetPreview.projectSamples.length > 0 && (
+                      <div className="text-slate-400 mt-0.5">أمثلة: {sheetPreview.projectSamples.join("، ")}</div>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">عمود القطاع:</span>{" "}
+                    <b className="text-slate-800">{sheetPreview.sectorHeader || "—"}</b>
+                    {sheetPreview.sectorSamples.length > 0 && (
+                      <div className="text-slate-400 mt-0.5">أمثلة: {sheetPreview.sectorSamples.join("، ")}</div>
+                    )}
+                  </div>
+                </div>
+                {sheetPreview.warnings.length > 0 && (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-amber-800">
+                    {sheetPreview.warnings.map((w: string, i: number) => (
+                      <p key={i}>{w}</p>
+                    ))}
+                  </div>
+                )}
+                {!sheetPreview.hasProject && !sheetPreview.hasSector && (
+                  <p className="text-amber-700">لا توجد أعمدة مشروع/قطاع — ستبقى القيم غير محددة.</p>
+                )}
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <button
                 onClick={() => setSheetDialog(null)}

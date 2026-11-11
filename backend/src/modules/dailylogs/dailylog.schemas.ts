@@ -33,6 +33,7 @@ export const listDailyLogQuerySchema = z.object({
   code: z.string().trim().optional(),
   name: z.string().trim().optional(),
   sector: z.string().trim().optional(),
+  projectName: z.string().trim().optional(),
   productivityType: z.string().trim().optional(),
   productivityCountFrom: z.coerce.number().min(0).optional(),
   productivityCountTo: z.coerce.number().min(0).optional(),

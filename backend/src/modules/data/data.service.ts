@@ -4,6 +4,17 @@ import prisma from "../../config/prisma";
 import { managersProjects, normalizeArabic } from "../../utils/managers";
 import { ensureSectorLink, syncSectorsForProject } from "../sectors/sector.service";
 import { withDbRetry } from "../../utils/db";
+import {
+  buildImportedSnapshot,
+  createMasterIndex,
+  detectDailyLogColumns,
+  makeColFinder,
+  matchProjectId,
+  matchSectorId,
+  normHeader as norm,
+  type DailyLogSnapshot,
+} from "./excelImport";
+import { DAILYLOG_CSV_HEADERS, buildDailyLogExportRow } from "../dailylogs/dailylogExport";
 
 function fail(message: string, status: number): never {
   throw Object.assign(new Error(message), { status });
@@ -231,20 +242,7 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   errors: { row: number; message: string }[];
-}
-
-function norm(v: unknown): string {
-  return String(v ?? "")
-    .replace(/[:：]/g, "")
-    .replace(/[\u064B-\u0652\u0640]/g, "")
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ؤ/g, "و")
-    .replace(/ئ/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  warnings: string[];
 }
 
 function findHeaderRow(rows: unknown[][]): number {
@@ -254,23 +252,6 @@ function findHeaderRow(rows: unknown[][]): number {
       return n === "كود المعده" || n === "الكود" || n === "رقم امر الشغل";
     })
   );
-}
-
-function makeColFinder(headers: unknown[]) {
-  const norms = headers.map(norm);
-  return (aliases: string[]): number | null => {
-    const as = aliases.map(norm);
-    for (const a of as) {
-      const i = norms.indexOf(a);
-      if (i !== -1) return i;
-    }
-    for (const a of as) {
-      if (!a) continue;
-      const i = norms.findIndex((n) => n.includes(a));
-      if (i !== -1) return i;
-    }
-    return null;
-  };
 }
 
 function locateLayout(rows: unknown[][], entity: Entity) {
@@ -459,7 +440,7 @@ export async function importEntity(
   const chosen = pickSheet(entity, sheets, sheetName);
   const allRows = chosen.rows;
   const { headers, col, dataStart } = locateLayout(allRows, entity);
-  const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
+  const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [], warnings: [] };
   const eqCache = new Map<string, number>();
   // معرّفات السجلات اللي الاستيراد ده أنشأها — تُحفظ في سجل الاستيراد لحذفها لاحقًا
   const createdIds: number[] = [];
@@ -672,11 +653,39 @@ export async function importEntity(
     const cCond = col(["الصلاحية", "الحالة"]);
     const cCondNote = col(["ملاحظة الحالة"]);
     const cNotes = col(["ملاحظات"]);
-    const cProj = col(["المشروع", "المشروع:"]);
-    const cSec = col(["القطاع"]);
+    // Project/sector come ONLY from the Excel row. Detection is explicit so a
+    // missing column produces a warning instead of mapping an unrelated column.
+    const layout = detectDailyLogColumns(headers);
+    result.warnings.push(...layout.warnings);
+    const cProj = layout.projectNameIndex;
+    const cProjCode = layout.projectCodeIndex;
+    const cSec = layout.sectorIndex;
+    console.log(
+      `[import:dailylogs] project="${layout.projectNameHeader ?? "-"}" projectCode="${
+        layout.projectCodeHeader ?? "-"
+      }" sector="${layout.sectorHeader ?? "-"}" warnings=${layout.warnings.length}`
+    );
     if (cDate == null) {
       fail("الملف مفيهوش عمود «التاريخ» — ده ملف يومية أصلًا؟", 400);
     }
+
+    // Master data is used for IDs only. It can never supply or replace the
+    // Excel project/sector text.
+    const masterProjects = await prisma.project.findMany({
+      select: { id: true, code: true, name: true },
+    });
+    const masterSectorLinks = await prisma.projectSector.findMany({
+      where: { active: true },
+      select: { projectId: true, sectorId: true, sector: { select: { name: true } } },
+    });
+    const master = createMasterIndex(
+      masterProjects,
+      masterSectorLinks.map((l) => ({
+        projectId: l.projectId,
+        sectorId: l.sectorId,
+        sectorName: l.sector.name,
+      }))
+    );
 
     interface DlRow {
       rowNo: number;
@@ -693,7 +702,7 @@ export async function importEntity(
         condition: Condition | null;
         conditionNote: string | null;
         notes: string | null;
-      };
+      } & Partial<DailyLogSnapshot>;
     }
     const parsed: DlRow[] = [];
     for (let i = dataStart; i < allRows.length; i++) {
@@ -713,11 +722,23 @@ export async function importEntity(
       const prodNumber = prodCell === "" ? null : Number(prodCell);
       // خلية الإنتاجية القديمة: رقم يعني عدد، وغير الرقمي يعني النوع
       const prodIsCount = prodCountCell == null && prodNumber != null && Number.isFinite(prodNumber);
+
+      const projNameText = g(r, cProj);
+      const projCodeText = g(r, cProjCode);
+      const secNameText = g(r, cSec);
+      const projectId = matchProjectId(master, projNameText || null, projCodeText || null);
+      const sectorId = matchSectorId(master, projectId, secNameText || null);
+      const snapshot = buildImportedSnapshot(
+        { projectName: projNameText, projectCode: projCodeText, sectorName: secNameText },
+        layout,
+        { projectId, sectorId }
+      );
+
       parsed.push({
         rowNo: i + 1,
         code,
-        projName: g(r, cProj),
-        secName: g(r, cSec),
+        projName: projNameText,
+        secName: secNameText,
         data: {
           date,
           endMeter: gn(r, cEnd),
@@ -728,6 +749,7 @@ export async function importEntity(
           condition: cond,
           conditionNote: condNote || null,
           notes: g(r, cNotes) || null,
+          ...(snapshot ?? {}),
         },
       });
     }
@@ -759,6 +781,12 @@ export async function importEntity(
         condition: true,
         conditionNote: true,
         notes: true,
+        projectId: true,
+        projectCode: true,
+        projectName: true,
+        sectorId: true,
+        sectorName: true,
+        contextSource: true,
       },
     });
     const exMap = new Map(existing.map((e) => [dayKey(e.date, e.equipmentId), e]));
@@ -772,7 +800,16 @@ export async function importEntity(
       same(ex.productivityCount, d.productivityCount) &&
       same(ex.condition, d.condition) &&
       same(ex.conditionNote, d.conditionNote) &&
-      same(ex.notes, d.notes);
+      same(ex.notes, d.notes) &&
+      // Snapshot is compared only when the workbook actually provided columns.
+      ("contextSource" in d
+        ? same(ex.projectId, d.projectId) &&
+          same(ex.projectCode, d.projectCode) &&
+          same(ex.projectName, d.projectName) &&
+          same(ex.sectorId, d.sectorId) &&
+          same(ex.sectorName, d.sectorName) &&
+          same(ex.contextSource, d.contextSource)
+        : true);
 
     const creates: DlRow[] = [];
     const updates: { id: number; data: DlRow["data"] }[] = [];
@@ -782,6 +819,20 @@ export async function importEntity(
       else if (!unchanged(ex, p.data)) updates.push({ id: ex.id, data: p.data });
       else result.updated++;
     }
+
+    // If the sheet has no project/sector columns, never touch an existing
+    // stored snapshot (nothing legitimate to replace it with).
+    const updateData = (d: DlRow["data"]) => {
+      if (layout.hasProject || layout.hasSector) return d;
+      const copy = { ...d };
+      delete copy.projectId;
+      delete copy.projectCode;
+      delete copy.projectName;
+      delete copy.sectorId;
+      delete copy.sectorName;
+      delete copy.contextSource;
+      return copy;
+    };
 
     for (const c of chunk(creates, 500)) {
       const res = await prisma.dailyLog.createMany({
@@ -801,7 +852,9 @@ export async function importEntity(
     }
     for (const c of chunk(updates, 100)) {
       await prisma.$transaction(
-        c.map((u) => prisma.dailyLog.update({ where: { id: u.id }, data: u.data }))
+        c.map((u) =>
+          prisma.dailyLog.update({ where: { id: u.id }, data: updateData(u.data) })
+        )
       );
       result.updated += c.length;
     }

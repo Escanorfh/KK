@@ -4,6 +4,7 @@ import { logAudit } from "../../utils/audit";
 import { issueAttestation, verifyAttestation, attestationMatchesSnapshot } from "../../utils/attestation";
 import { assertReadingNotDecreasing } from "../../utils/meterReading";
 import { scopeOr } from "../../utils/scope";
+import { DAILYLOG_CSV_HEADERS, buildDailyLogExportRow } from "./dailylogExport";
 
 const include = {
   equipment: {
@@ -414,6 +415,7 @@ interface ListParams {
   code?: string;
   name?: string;
   sector?: string;
+  projectName?: string;
   productivityType?: string;
   productivityCountFrom?: number;
   productivityCountTo?: number;
@@ -442,6 +444,7 @@ function buildWhere({
   code,
   name,
   sector,
+  projectName,
   productivityType,
   productivityCountFrom,
   productivityCountTo,
@@ -480,6 +483,14 @@ function buildWhere({
   if (code) and.push({ equipment: { code: { contains: code, mode: "insensitive" } } });
   if (name) and.push({ equipment: { name: { contains: name, mode: "insensitive" } } });
   if (sector) and.push({ sectorName: { contains: sector, mode: "insensitive" } });
+  if (projectName) {
+    and.push({
+      OR: [
+        { projectName: { contains: projectName, mode: "insensitive" } },
+        { projectCode: { contains: projectName, mode: "insensitive" } },
+      ],
+    });
+  }
   if (user) and.push({ user: { name: { contains: user, mode: "insensitive" } } });
   if (productivityType)
     and.push({ productivityType: { contains: productivityType, mode: "insensitive" } });
@@ -580,30 +591,6 @@ export async function productivityTypes(scope?: number[] | null) {
   return grouped.map((g) => g.productivityType).filter((v): v is string => v !== null);
 }
 
-const CSV_HEADERS = [
-  "رقم السجل",
-  "التاريخ",
-  "كود المعدة",
-  "اسم المعدة",
-  "المشروع",
-  "القطاع",
-  "نهاية العداد",
-  "ساعات التشغيل",
-  "الديزل",
-  "نوع الإنتاجية",
-  "عدد الإنتاجية",
-  "الصلاحية",
-  "تفصيل الصلاحية",
-  "ملاحظات",
-  "المستخدم",
-];
-
-const CONDITION_AR: Record<string, string> = {
-  GOOD: "صالح",
-  BROKEN: "عاطل",
-  STOPPED: "متوقف",
-};
-
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = String(v);
@@ -618,29 +605,9 @@ export async function exportRows(params: Omit<ListParams, "page" | "pageSize">) 
     orderBy: [{ date: "desc" }, { id: "desc" }],
   });
 
-  const lines = [CSV_HEADERS.join(",")];
+  const lines = [DAILYLOG_CSV_HEADERS.join(",")];
   for (const r of rows) {
-    lines.push(
-      [
-        r.id,
-        r.date.toISOString().slice(0, 10),
-        r.equipment.code,
-        r.equipment.name,
-        r.projectName ?? r.projectCode ?? "غير محدد",
-        r.sectorName ?? "غير محدد",
-        r.endMeter ?? "",
-        r.operatingHours ?? "",
-        r.diesel ?? "",
-        r.productivityType ?? "",
-        r.productivityCount ?? "",
-        r.condition ? CONDITION_AR[r.condition] : "",
-        r.conditionNote ?? "",
-        r.notes ?? "",
-        r.user?.name ?? "",
-      ]
-        .map(csvCell)
-        .join(",")
-    );
+    lines.push(buildDailyLogExportRow(r).map(csvCell).join(","));
   }
 
   return "\uFEFF" + lines.join("\r\n");
