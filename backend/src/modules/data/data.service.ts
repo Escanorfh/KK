@@ -1136,45 +1136,83 @@ export async function clearEntity(entity: Entity) {
   return { message: "تم مسح البيانات", deleted: count };
 }
 
+/**
+ * Wipe all operational data in a single transaction.
+ *
+ * Order matters: leaf tables first, roots last. The previous version never
+ * deleted ProjectSector, whose relations to Project and Sector are Restrict,
+ * so sector/project deletion failed with a foreign-key error (P2003).
+ * RepairOrder, NeedRequest and Fault reference ProjectSector with Restrict too,
+ * so they must be removed before it. Users and equipment categories are kept.
+ */
 export async function clearAll() {
-  const [workParts, maintenance, dailyLogs, partSchedules, oilSchedules, faults, auditLogs, sectors, equipment, projects, importLogs] =
-    await prisma.$transaction([
-      prisma.workPart.deleteMany(),
-      prisma.maintenance.deleteMany(),
-      prisma.dailyLog.deleteMany(),
-      prisma.partSchedule.deleteMany(),
-      prisma.oilSchedule.deleteMany(),
-      prisma.fault.deleteMany(),
-      prisma.auditLog.deleteMany(),
-      prisma.sector.deleteMany(),
-      prisma.equipment.deleteMany(),
-      prisma.project.deleteMany(),
-      prisma.importLog.deleteMany(),
-    ]);
-  void workParts;
-  void maintenance;
-  void dailyLogs;
-  void partSchedules;
-  void oilSchedules;
-  void faults;
-  void auditLogs;
-  void sectors;
-  void equipment;
-  void projects;
-  void importLogs;
+  const [
+    workParts,
+    repairParts,
+    repairOrderEvents,
+    needRequestItems,
+    repairOrders,
+    needRequests,
+    faults,
+    oilConsumptions,
+    meterResets,
+    dailyLogs,
+    maintenance,
+    oilSchedules,
+    partSchedules,
+    projectSectors,
+    userProjects,
+    equipment,
+    sectors,
+    projects,
+    auditLogs,
+    importLogs,
+  ] = await prisma.$transaction([
+    prisma.workPart.deleteMany(),
+    prisma.repairPart.deleteMany(),
+    prisma.repairOrderEvent.deleteMany(),
+    prisma.needRequestItem.deleteMany(),
+    prisma.repairOrder.deleteMany(),
+    prisma.needRequest.deleteMany(),
+    prisma.fault.deleteMany(),
+    prisma.oilConsumption.deleteMany(),
+    prisma.meterReset.deleteMany(),
+    prisma.dailyLog.deleteMany(),
+    prisma.maintenance.deleteMany(),
+    prisma.oilSchedule.deleteMany(),
+    prisma.partSchedule.deleteMany(),
+    prisma.projectSector.deleteMany(),
+    prisma.userProject.deleteMany(),
+    prisma.equipment.deleteMany(),
+    prisma.sector.deleteMany(),
+    prisma.project.deleteMany(),
+    prisma.auditLog.deleteMany(),
+    prisma.importLog.deleteMany(),
+  ]);
+
   return {
     message: "تم مسح كل البيانات وإبقاء المستخدمين",
     deleted: {
       workParts: workParts.count,
-      maintenance: maintenance.count,
-      dailyLogs: dailyLogs.count,
-      partSchedules: partSchedules.count,
-      oilSchedules: oilSchedules.count,
+      repairParts: repairParts.count,
+      repairOrderEvents: repairOrderEvents.count,
+      needRequestItems: needRequestItems.count,
+      repairOrders: repairOrders.count,
+      needRequests: needRequests.count,
       faults: faults.count,
-      auditLogs: auditLogs.count,
-      sectors: sectors.count,
+      oilConsumptions: oilConsumptions.count,
+      meterResets: meterResets.count,
+      dailyLogs: dailyLogs.count,
+      maintenance: maintenance.count,
+      oilSchedules: oilSchedules.count,
+      partSchedules: partSchedules.count,
+      projectSectors: projectSectors.count,
+      userProjects: userProjects.count,
       equipment: equipment.count,
+      sectors: sectors.count,
       projects: projects.count,
+      auditLogs: auditLogs.count,
+      importLogs: importLogs.count,
     },
   };
 }
