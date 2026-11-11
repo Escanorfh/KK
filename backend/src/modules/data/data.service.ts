@@ -8,6 +8,7 @@ import {
   buildImportedSnapshot,
   createMasterIndex,
   detectDailyLogColumns,
+  extractTitleProjectSector,
   makeColFinder,
   matchProjectId,
   matchSectorId,
@@ -439,7 +440,7 @@ export async function importEntity(
   const sheets = sheetsFromBuffer(buffer);
   const chosen = pickSheet(entity, sheets, sheetName);
   const allRows = chosen.rows;
-  const { headers, col, dataStart } = locateLayout(allRows, entity);
+  const { headers, col, dataStart, hIdx } = locateLayout(allRows, entity);
   const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [], warnings: [] };
   const eqCache = new Map<string, number>();
   // معرّفات السجلات اللي الاستيراد ده أنشأها — تُحفظ في سجل الاستيراد لحذفها لاحقًا
@@ -657,13 +658,18 @@ export async function importEntity(
     // missing column produces a warning instead of mapping an unrelated column.
     const layout = detectDailyLogColumns(headers);
     result.warnings.push(...layout.warnings);
+    const titleVals = extractTitleProjectSector(allRows, hIdx);
     const cProj = layout.projectNameIndex;
     const cProjCode = layout.projectCodeIndex;
     const cSec = layout.sectorIndex;
+    const effectiveLayout = {
+      hasProject: layout.hasProject || !!titleVals.projectName,
+      hasSector: layout.hasSector || !!titleVals.sectorName,
+    };
     console.log(
-      `[import:dailylogs] project="${layout.projectNameHeader ?? "-"}" projectCode="${
+      `[import:dailylogs] project="${layout.projectNameHeader ?? titleVals.projectName ?? "-"}" projectCode="${
         layout.projectCodeHeader ?? "-"
-      }" sector="${layout.sectorHeader ?? "-"}" warnings=${layout.warnings.length}`
+      }" sector="${layout.sectorHeader ?? titleVals.sectorName ?? "-"}" warnings=${layout.warnings.length}`
     );
     if (cDate == null) {
       fail("الملف مفيهوش عمود «التاريخ» — ده ملف يومية أصلًا؟", 400);
@@ -723,14 +729,15 @@ export async function importEntity(
       // خلية الإنتاجية القديمة: رقم يعني عدد، وغير الرقمي يعني النوع
       const prodIsCount = prodCountCell == null && prodNumber != null && Number.isFinite(prodNumber);
 
-      const projNameText = g(r, cProj);
-      const projCodeText = g(r, cProjCode);
-      const secNameText = g(r, cSec);
+      const projNameText =
+        cProj != null ? g(r, cProj) : titleVals.projectName || "";
+      const projCodeText = cProjCode != null ? g(r, cProjCode) : "";
+      const secNameText = cSec != null ? g(r, cSec) : titleVals.sectorName || "";
       const projectId = matchProjectId(master, projNameText || null, projCodeText || null);
       const sectorId = matchSectorId(master, projectId, secNameText || null);
       const snapshot = buildImportedSnapshot(
         { projectName: projNameText, projectCode: projCodeText, sectorName: secNameText },
-        layout,
+        effectiveLayout,
         { projectId, sectorId }
       );
 

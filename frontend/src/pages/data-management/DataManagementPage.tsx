@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { cn, todayLocal } from "@/lib/utils";
 import { api, getApiError } from "@/lib/api";
-import { readDailyLogPreview } from "@/lib/excelImport";
+import { readDailyLogPreview, extractTitleProjectSector } from "@/lib/excelImport";
 
 type ImportEntity = "projects" | "equipments" | "dailylogs" | "maintenance" | "partschedules";
 
@@ -171,7 +171,9 @@ export default function DataManagementPage() {
     }
     const ws = wbState.Sheets[sheetDialog.chosen];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
-    setSheetPreview(readDailyLogPreview(rows));
+    const preview = readDailyLogPreview(rows);
+    const titleVals = extractTitleProjectSector(rows, (preview?.dataStart ?? 1) - 1);
+    setSheetPreview(preview ? { ...preview, titleProject: titleVals.projectName, titleSector: titleVals.sectorName } : null);
   }, [sheetDialog?.chosen, wbState, sheetDialog?.entity]);
 
   const [imports, setImports] = useState<ImportLogRow[]>([]);
@@ -781,13 +783,17 @@ export default function DataManagementPage() {
                     )}
                   </div>
                 </div>
-                {sheetPreview.warnings.length > 0 && (
+                {sheetPreview.titleProject && !sheetPreview.hasProject && (
+                  <p className="text-slate-600">مشروع الشيت: <b>{sheetPreview.titleProject}</b> (سيُستخدم لجميع الصفوف)</p>
+                )}
+                {sheetPreview.titleSector && !sheetPreview.hasSector && (
+                  <p className="text-slate-600">قطاع الشيت: <b>{sheetPreview.titleSector}</b> (سيُستخدم لجميع الصفوف)</p>
+                )}
                   <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-amber-800">
                     {sheetPreview.warnings.map((w: string, i: number) => (
                       <p key={i}>{w}</p>
                     ))}
                   </div>
-                )}
                 {!sheetPreview.hasProject && !sheetPreview.hasSector && (
                   <p className="text-amber-700">لا توجد أعمدة مشروع/قطاع — ستبقى القيم غير محددة.</p>
                 )}

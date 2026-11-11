@@ -226,9 +226,39 @@ export function matchSectorId(
   return found ?? null;
 }
 
-/* ------------------------------------------------------------------ */
-/* Snapshot building                                                   */
-/* ------------------------------------------------------------------ */
+export function extractTitleProjectSector(
+  rows: unknown[][],
+  headerRowIdx: number
+): { projectName: string | null; sectorName: string | null } {
+  let projectName: string | null = null;
+  let sectorName: string | null = null;
+  const limit = Math.max(0, headerRowIdx);
+  for (let i = 0; i <= limit; i++) {
+    const r = rows[i] || [];
+    for (let j = 0; j < r.length; j++) {
+      const n = normHeader(r[j]);
+      if ((n === "المشروع" || n === "المشروع:") && projectName == null) {
+        for (let k = j + 1; k < r.length; k++) {
+          const v = String(r[k] ?? "").trim();
+          if (v) {
+            projectName = v;
+            break;
+          }
+        }
+      }
+      if ((n === "القطاع" || n === "القطاع:") && sectorName == null) {
+        for (let k = j + 1; k < r.length; k++) {
+          const v = String(r[k] ?? "").trim();
+          if (v) {
+            sectorName = v;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return { projectName, sectorName };
+}
 
 export interface DailyLogSnapshot {
   projectId: number | null;
