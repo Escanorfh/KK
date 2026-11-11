@@ -1,11 +1,10 @@
 /**
  * اختبارات القطاع في طلبات الاحتياج (نطاق Requisitions فقط).
- * mock server محلي بيعامل نظام المدرين + prisma مزروع: ولا اتصال بقاعدة ولا كتابة على المدرين الحقيقيين.
+ * بديل fetch في الذاكرة بيحاكي نظام المدرين + prisma مزروع:
+ * مافيش سيرفر ولا فتح socket ولا اتصال بقاعدة ولا كتابة على المدرين الحقيقيين.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 
 // أي اتصال حقيقي لازم يفشل بصوت عالي — كل الاستعلامات بتخدمها البدائل تحت
 process.env.DATABASE_URL = "postgresql://stub:stub@127.0.0.1:1/efms_sector_test";
@@ -47,77 +46,100 @@ interface CapturedRequest {
 
 let posts: CapturedRequest[] = [];
 let requests: CapturedRequest[] = [];
-let server: http.Server;
-let baseUrl: string;
+const baseUrl = "http://127.0.0.1:9/api";
+const originalFetch = globalThis.fetch;
+let fetchInstalled = false;
 
-function readBody(req: http.IncomingMessage): Promise<Record<string, unknown> | null> {
-  return new Promise((resolve) => {
-    let raw = "";
-    req.on("data", (chunk) => (raw += chunk));
-    req.on("end", () => {
-      if (!raw) return resolve(null);
-      try {
-        resolve(JSON.parse(raw) as Record<string, unknown>);
-      } catch {
-        resolve(null);
-      }
-    });
+function jsonResponse(status: number, payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
   });
 }
 
+/** بديل fetch بالكامل: بيحاكي مسارات المدرين المستخدمة هنا — بلا أي socket. */
+async function fakeManagersFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = (init?.method ?? "GET").toUpperCase();
+  let body: Record<string, unknown> | null = null;
+  if (typeof init?.body === "string" && init.body) {
+    try {
+      body = JSON.parse(init.body) as Record<string, unknown>;
+    } catch {
+      body = null;
+    }
+  }
+  const { pathname } = new URL(raw);
+  requests.push({ method, url: raw, body });
+
+  const headers = new Headers(init?.headers);
+  if (headers.get("Authorization") !== `Bearer ${TOKEN}`) {
+    return jsonResponse(401, { ok: false, message: "غير مصرح" });
+  }
+
+  if (pathname === "/api/requisitions/projects") {
+    return jsonResponse(200, {
+      ok: true,
+      worker_name: "EFMS",
+      total: REMOTE_PROJECTS.length,
+      projects: REMOTE_PROJECTS,
+    });
+  }
+
+  if (pathname === "/api/requisitions" && method === "POST") {
+    posts.push({ method, url: raw, body });
+    const roomId = body?.room_id;
+    if (typeof roomId !== "number" || !Number.isInteger(roomId)) {
+      return jsonResponse(403, NO_SECTOR_403);
+    }
+    const project = REMOTE_PROJECTS.find((p) => p.id === body?.project_id);
+    const authorized = project?.rooms?.some((r) => r.room_id === roomId) || project?.room_id === roomId;
+    if (!authorized) return jsonResponse(403, NO_SECTOR_403);
+    return jsonResponse(201, {
+      ok: true,
+      data: { id: 9001, requisition_number: "ERQ-2026-0777", status: "review_in_progress" },
+    });
+  }
+
+  const detail = /^\/api\/requisitions\/(\d+)$/.exec(pathname);
+  if (detail && method === "GET") {
+    return jsonResponse(200, {
+      ok: true,
+      requisition: {
+        id: Number(detail[1]),
+        requisition_number: "ERQ-2026-0777",
+        status: "review_in_progress",
+      },
+    });
+  }
+
+  // تحديث الطلب: مواصفات المدرين ما فيها room_id ولا project_id — لو جاوا بنا نرفضهم زي ما الـ API بيعمل
+  if (detail && method === "PUT") {
+    if (body?.room_id !== undefined || body?.project_id !== undefined) {
+      return jsonResponse(422, { ok: false, message: "لا يمكن تغيير المشروع أو القطاع بعد الإنشاء" });
+    }
+    return jsonResponse(200, {
+      ok: true,
+      data: { id: Number(detail[1]), status: "review_in_progress" },
+    });
+  }
+
+  if (detail && method === "DELETE") {
+    return jsonResponse(200, { ok: true });
+  }
+
+  return jsonResponse(404, { ok: false, message: "not found" });
+}
+
+/** تركيب بديل fetch مرة واحدة — مافيش listen ولا createServer. */
 async function startMockManagers(): Promise<void> {
-  if (server) return;
-  server = http.createServer(async (req, res) => {
-    const url = req.url || "";
-    const body = await readBody(req);
-    requests.push({ method: req.method, url, body });
-    const send = (status: number, payload: unknown) => {
-      res.writeHead(status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(payload));
-    };
-
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
-      return send(401, { ok: false, message: "غير مصرح" });
-    }
-
-    if (url === "/api/requisitions/projects") {
-      return send(200, { ok: true, worker_name: "EFMS", total: REMOTE_PROJECTS.length, projects: REMOTE_PROJECTS });
-    }
-
-    if (url === "/api/requisitions" && req.method === "POST") {
-      posts.push({ method: "POST", url, body });
-      const roomId = body?.room_id;
-      if (typeof roomId !== "number" || !Number.isInteger(roomId)) return send(403, NO_SECTOR_403);
-      const project = REMOTE_PROJECTS.find((p) => p.id === body?.project_id);
-      const authorized = project?.rooms?.some((r) => r.room_id === roomId) || project?.room_id === roomId;
-      if (!authorized) return send(403, NO_SECTOR_403);
-      return send(201, {
-        ok: true,
-        data: { id: 9001, requisition_number: "ERQ-2026-0777", status: "review_in_progress" },
-      });
-    }
-
-    const detail = /^\/api\/requisitions\/(\d+)$/.exec(url);
-    if (detail && req.method === "GET") {
-      return send(200, {
-        ok: true,
-        requisition: { id: Number(detail[1]), requisition_number: "ERQ-2026-0777", status: "review_in_progress" },
-      });
-    }
-
-    // تحديث الطلب: مواصفات المدرين ما فيها room_id ولا project_id — لو جاوا بنا نرفضهم زي ما الـ API بيعمل
-    if (detail && req.method === "PUT") {
-      if (body?.room_id !== undefined || body?.project_id !== undefined) {
-        return send(422, { ok: false, message: "لا يمكن تغيير المشروع أو القطاع بعد الإنشاء" });
-      }
-      return send(200, { ok: true, data: { id: Number(detail[1]), status: "review_in_progress" } });
-    }
-
-    return send(404, { ok: false, message: "not found" });
-  });
-
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  if (!fetchInstalled) {
+    globalThis.fetch = fakeManagersFetch as typeof globalThis.fetch;
+    fetchInstalled = true;
+  }
   process.env.MANAGERS_API_URL = baseUrl;
   process.env.MANAGERS_API_TOKEN = TOKEN;
 }
@@ -133,8 +155,8 @@ test("mock المدرين: طلب بلا room_id بيرجع نفس 403 الحق�
   assert.match((await res.text()).toString(), /بدون قطاع/);
 });
 
-test.after(async () => {
-  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+test.after(() => {
+  globalThis.fetch = originalFetch;
 });
 
 // ————— بيانات وهمية لنموذج طلب الاحتياج —————
@@ -444,6 +466,88 @@ test("٦ج) الربط اليدوي بيقبل معرّف من القائمة ا
   assert.equal((cleared as any).managersRoomTitle, null);
 });
 
+test("٦د) ربط المدرين بيختار المشروع من الربط النشط قبل العمود القديم", async () => {
+  await startMockManagers();
+  const managers = await import("../../utils/managers.js");
+  await managers.managersProjects(true);
+  const sectorMod = await import("../sectors/sector.service.js");
+  const lookedUp: number[] = [];
+  plant({
+    project: {
+      findUnique: async ({ where }: { where: { id: number } }) => {
+        lookedUp.push(where.id);
+        return where.id === 11 ? PROJECT : null;
+      },
+    },
+    sector: {
+      findUnique: async () => ({
+        id: 7,
+        name: "المخازن",
+        projectId: 13,
+        project: { name: "مشروع قديم" },
+        projectSectors: [{ id: 55, projectId: 11, active: true, project: { name: PROJECT.name } }],
+      }),
+      update: async ({ data }: { data: Record<string, unknown> }) => ({ id: 7, ...data }),
+    },
+  });
+
+  const linked = await sectorMod.linkManagersRoom(7, 88, 1);
+  assert.equal((linked as any).managersRoomId, 88);
+  assert.deepEqual(lookedUp, [11], "المشروع جه من الربط النشط مش من العمود القديم");
+});
+
+test("٦هـ) قطاع بربط ملغي فقط → 422 قبل أي نداء للمدرين", async () => {
+  await startMockManagers();
+  const sectorMod = await import("../sectors/sector.service.js");
+  let updates = 0;
+  plant({
+    sector: {
+      findUnique: async () => ({
+        id: 7,
+        name: "المخازن",
+        projectId: 11,
+        project: { name: PROJECT.name },
+        projectSectors: [{ id: 55, projectId: 11, active: false, project: { name: PROJECT.name } }],
+      }),
+      update: async () => {
+        updates++;
+        return null;
+      },
+    },
+  });
+
+  const err = await sectorMod
+    .linkManagersRoom(7, 88, 1)
+    .then(() => null, (e: unknown) => e as Error & { status?: number });
+  assert.ok(err);
+  assert.equal(err!.status, 422);
+  assert.match(err!.message, /غير مرتبط بأي مشروع نشط/);
+  assert.equal(updates, 0, "مافيش تحديث على القطاع");
+});
+
+test("٦و) قطاع بلا أي ربط وبلا أصل قديم → 422", async () => {
+  await startMockManagers();
+  const sectorMod = await import("../sectors/sector.service.js");
+  plant({
+    sector: {
+      findUnique: async () => ({
+        id: 7,
+        name: "المخازن",
+        projectId: null,
+        project: null,
+        projectSectors: [],
+      }),
+    },
+  });
+
+  const err = await sectorMod
+    .linkManagersRoom(7, 88, 1)
+    .then(() => null, (e: unknown) => e as Error & { status?: number });
+  assert.ok(err);
+  assert.equal(err!.status, 422);
+  assert.match(err!.message, /غير مربوط بمشروع/);
+});
+
 test("٧) طلب قديم بلا قطاع — القراءة والتعديل بيمشوا عادي، والإرسال يترفض محليًا برسالة", async () => {
   const { mod, calls } = await install({
     need: { sectorId: null, sector: null, managersId: null, status: "DRAFT" },
@@ -537,4 +641,102 @@ test("١٢) MANAGERS_API_URL مش أساس الـ API → رفض باسم الم
   assert.match(err!.message, /MANAGERS_API_URL/);
   assert.match(err!.message, /\/admin\/api-tokens/);
   assert.doesNotMatch(err!.message, /host-not-shown/, "النطاق ما بيتطبعش في رسالة الخطأ");
+});
+
+// ————— عضوية M:N الانتقالية (Phase B.2.2.3) —————
+
+/** قطاع أصله القديم لمشروع تاني لكن مربوط M:N بالمشروع المطلوب */
+function linkedSector(projectId: number, links: { projectId: number; active: boolean }[]) {
+  return sectorOf({ projectId, projectSectors: links });
+}
+
+test("١٣) ربط M:N نشط مقبول حتى لو الأصل القديم لمشروع مختلف", async () => {
+  const { mod, calls } = await install({
+    sector: linkedSector(1, [{ projectId: 11, active: true }]),
+  });
+  await mod.create(
+    { projectId: 11, sectorId: 7, department: "المخازن", requestDate: "2026-11-05", items: ITEMS },
+    1
+  );
+  assert.equal((calls.needCreate[0] as any).sectorId, 7);
+});
+
+test("١٤) ربط M:N ملغي مرفوض حتى لو العمود القديم مطابق", async () => {
+  const { mod } = await install({
+    sector: linkedSector(11, [{ projectId: 11, active: false }]),
+  });
+  const err = await mod
+    .create({ projectId: 11, sectorId: 7, department: "المخازن", requestDate: "2026-11-05", items: ITEMS }, 1)
+    .then(() => null, (e: unknown) => e as Error & { status?: number });
+  assert.ok(err);
+  assert.equal(err!.status, 422);
+  assert.match(err!.message, /لا يتبع المشروع/);
+});
+
+test("١٥) قطاع قديم بلا أي صف ربط (legacy-only) مقبول", async () => {
+  const { mod, calls } = await install({ sector: sectorOf({ projectId: 11, projectSectors: [] }) });
+  await mod.create(
+    { projectId: 11, sectorId: 7, department: "المخازن", requestDate: "2026-11-05", items: ITEMS },
+    1
+  );
+  assert.equal((calls.needCreate[0] as any).sectorId, 7);
+});
+
+test("١٦) قطاع مرتبط بمشروع آخر فقط مرفوض (مافيش كشف صلاحيات عرضي)", async () => {
+  const { mod } = await install({
+    sector: linkedSector(11, [{ projectId: 12, active: true }]),
+  });
+  const err = await mod
+    .create({ projectId: 11, sectorId: 7, department: "المخازن", requestDate: "2026-11-05", items: ITEMS }, 1)
+    .then(() => null, (e: unknown) => e as Error & { status?: number });
+  assert.ok(err);
+  assert.equal(err!.status, 422);
+});
+
+test("١٧) تعديل حقل غير متعلق بالمشروع بيحافظ على قطاع M:N وأصله القديم مختلف", async () => {
+  const sector = linkedSector(1, [{ projectId: 11, active: true }]);
+  const { mod, calls } = await install({
+    need: { projectId: 11, sectorId: 7, sector },
+    sector,
+  });
+  const result = await mod.update(100, { department: "المشتريات" }, 1);
+  assert.ok(result.record);
+  assert.equal((calls.needUpdate[0] as any).sectorId, undefined, "القطاع ما اتلغاش");
+});
+
+test("١٨) تغيير المشروع بيحتفظ بالقطاع لو عنده ربط نشط بالمشروع الجديد", async () => {
+  const sector = linkedSector(1, [{ projectId: 12, active: true }]);
+  const { mod, calls } = await install({
+    need: { projectId: 11, sectorId: 7, sector },
+    sector,
+    project: { id: 12, name: "خط طرد الرحلة", code: "TL" },
+  });
+  await mod.update(100, { projectId: 12 }, 1);
+  assert.equal((calls.needUpdate[0] as any).sectorId, undefined, "القطاع الصالح اتحفظ");
+  assert.equal((calls.needUpdate[0] as any).projectId, 12);
+});
+
+test("١٩) تغيير المشروع بيحذف القطاع لو ربطه بالمشروع الجديد ملغي فقط", async () => {
+  const sector = linkedSector(11, [
+    { projectId: 11, active: true },
+    { projectId: 12, active: false },
+  ]);
+  const { mod, calls } = await install({
+    need: { projectId: 11, sectorId: 7, sector },
+    sector,
+    project: { id: 12, name: "خط طرد الرحلة", code: "TL" },
+  });
+  await mod.update(100, { projectId: 12 }, 1);
+  assert.equal((calls.needUpdate[0] as any).sectorId, null);
+});
+
+test("٢٠) تغيير المشروع مع إرسال قطاع صريح صالح M:N بيقبله", async () => {
+  const sector = linkedSector(1, [{ projectId: 12, active: true }]);
+  const { mod, calls } = await install({
+    need: { projectId: 11, sectorId: 7, sector: linkedSector(11, [{ projectId: 11, active: true }]) },
+    sector,
+    project: { id: 12, name: "خط طرد الرحلة", code: "TL" },
+  });
+  await mod.update(100, { projectId: 12, sectorId: 7 }, 1);
+  assert.equal((calls.needUpdate[0] as any).sectorId, 7);
 });

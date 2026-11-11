@@ -12,6 +12,7 @@ import EquipmentPage from "./pages/equipment/EquipmentPage";
 import TrackingModesPage from "./pages/tracking-modes/TrackingModesPage";
 import RepairOrdersPage from "./pages/repair-orders/RepairOrdersPage";
 import NeedRequestsPage from "./pages/need-requests/NeedRequestsPage";
+import ReviewPage from "./pages/review/ReviewPage";
 import ProjectsPage from "./pages/projects/ProjectsPage";
 import UsersPage from "./pages/users/UsersPage";
 import DataManagementPage from "./pages/data-management/DataManagementPage";
@@ -54,6 +55,14 @@ export default function App() {
         />
         <Route path="/repair-orders" element={<RepairOrdersPage />} />
         <Route path="/need-requests" element={<NeedRequestsPage />} />
+        <Route
+          path="/review"
+          element={
+            <RequireAuth roles={["ROOT", "ADMIN"]}>
+              <ReviewPage />
+            </RequireAuth>
+          }
+        />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route
           path="/users"

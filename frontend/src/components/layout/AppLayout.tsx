@@ -6,6 +6,7 @@ import {
   Table2,
   Wrench,
   ClipboardList,
+  ClipboardCheck,
   AlertTriangle,
   Droplets,
   Fuel,
@@ -17,6 +18,7 @@ import {
   Database,
   SlidersHorizontal,
   LogOut,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConnectionStatus from "@/components/ConnectionStatus";
@@ -62,6 +64,7 @@ const sections: { title: string; links: NavLink[] }[] = [
     title: "الإدارة",
     links: [
       { to: "/tracking-modes", label: "أوضاع التتبع والفئات", icon: SlidersHorizontal, roles: ["ROOT", "ADMIN"] },
+      { to: "/review", label: "مراجعة البيانات", icon: ClipboardCheck, roles: ["ROOT", "ADMIN"] },
       { to: "/users", label: "المستخدمين", icon: Users, roles: ["ROOT", "ADMIN"] },
       { to: "/data-management", label: "إدارة البيانات", icon: Database, roles: ["ROOT"] },
     ],
@@ -143,6 +146,17 @@ export default function AppLayout() {
             ))}
         </nav>
 
+        <div className="px-3 pb-2">
+          <a
+            href="https://github.com/Escanorfh/KK/releases/latest/download/EFMS-Setup-x64.exe"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          >
+            <Download size={16} className="shrink-0" />
+            <span>تنزيل تطبيق الكمبيوتر</span>
+          </a>
+        </div>
         <div className="border-t border-slate-800 p-4">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
@@ -169,6 +183,16 @@ export default function AppLayout() {
         <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between gap-3 sticky top-0 z-40 print:hidden">
           <div className="text-sm font-semibold text-slate-700">نظام متابعة المعدات والصيانة</div>
           <div className="flex items-center gap-3">
+            <a
+              href="https://github.com/Escanorfh/KK/releases/latest/download/EFMS-Setup-x64.exe"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold px-3 py-1.5 transition-colors"
+              title="تنزيل تطبيق الكمبيوتر"
+            >
+              <Download size={14} />
+              تنزيل تطبيق الكمبيوتر
+            </a>
             <div className="text-xs text-slate-500">
               {new Date().toLocaleDateString("ar-EG", {
                 weekday: "long",

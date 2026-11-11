@@ -8,6 +8,7 @@ import {
   listSectorsQuerySchema,
   linkManagersRoomSchema,
   managersRoomsQuerySchema,
+  associateSectorProjectSchema,
 } from "./sector.schemas";
 
 const router = Router();
@@ -17,8 +18,16 @@ router.use(requireAuth);
 // قبل /:id عشان «managers-rooms» ما يتفسّرش كمعرّف قطاع
 router.get("/managers-rooms", validateQuery(managersRoomsQuerySchema), sectorController.managersRooms);
 router.get("/", validateQuery(listSectorsQuerySchema), sectorController.list);
-router.post("/", validate(createSectorSchema), sectorController.create);
-router.put("/:id", validate(updateSectorSchema), sectorController.update);
+router.post("/", requireRole("ROOT", "ADMIN"), validate(createSectorSchema), sectorController.create);
+router.get("/:id/projects", sectorController.listProjects);
+router.post(
+  "/:id/projects",
+  requireRole("ROOT", "ADMIN"),
+  validate(associateSectorProjectSchema),
+  sectorController.associateProject
+);
+router.delete("/:id/projects/:projectId", requireRole("ROOT", "ADMIN"), sectorController.removeProject);
+router.put("/:id", requireRole("ROOT", "ADMIN"), validate(updateSectorSchema), sectorController.update);
 router.put(
   "/:id/managers-room",
   requireRole("ROOT", "ADMIN"),

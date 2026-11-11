@@ -13,7 +13,7 @@ compression: normal
 npmRebuild: false
 forceCodeSigning: false
 win:
-  icon: build/icon.ico
+  icon: build/icon.png
   # بدون شهادة توقيع: لا حاجة لأدوات winCodeSign (تفشل على ويندوز بدون صلاحيات رموز مرتبطة)
   signAndEditExecutable: false
   target:

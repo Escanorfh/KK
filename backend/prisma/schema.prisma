@@ -94,8 +94,51 @@ model User {
   needRequestsCreated NeedRequest[]
   projects            UserProject[]
   oilConsumptions     OilConsumption[]
+  reviewSubmitted     ReviewRequest[] @relation("ReviewSubmitted")
+  reviewReviewed      ReviewRequest[] @relation("ReviewReviewed")
 
   @@schema("core")
+}
+
+enum ReviewStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+
+  @@schema("ops")
+}
+
+model ReviewRequest {
+  id              Int          @id @default(autoincrement())
+  entity          String
+  status          ReviewStatus  @default(PENDING_REVIEW)
+  clientRequestId String?       @unique
+  submittedById   Int
+  submittedBy     User          @relation("ReviewSubmitted", fields: [submittedById], references: [id], onDelete: Restrict)
+  submittedAt     DateTime      @default(now())
+  reviewedById    Int?
+  reviewedBy      User?         @relation("ReviewReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  rejectionReason String?
+  submittedData   Json
+  reviewedData    Json?
+  equipmentId     Int?
+  projectId       Int?
+  sectorId        Int?
+  projectName     String?
+  projectCode     String?
+  sectorName      String?
+  equipmentCode   String?
+  equipmentName   String?
+  contextSource   String?
+  capturedAt      DateTime?
+  recordId        Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status, entity])
+  @@index([submittedById])
+  @@schema("ops")
 }
 
 model Project {
@@ -376,6 +419,11 @@ model DailyLog {
   sectorId          Int?
   sector            Sector?    @relation(fields: [sectorId], references: [id], onDelete: SetNull)
   contextSource     String?
+  projectCode       String?
+  projectName       String?
+  sectorName        String?
+  equipmentCode     String?
+  equipmentName     String?
   userId            Int?
   user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt         DateTime   @default(now())
@@ -409,6 +457,12 @@ model Maintenance {
   sectorId        Int?
   sector          Sector?          @relation(fields: [sectorId], references: [id], onDelete: SetNull)
   contextSource   String?
+  projectCode     String?
+  projectName     String?
+  sectorName      String?
+  equipmentCode   String?
+  equipmentName   String?
+  clientRequestId String?          @unique
   operationId     String?          @unique
   userId          Int?
   user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { issueAttestation, verifyAttestation, attestationMatchesSnapshot } from "../../utils/attestation";
 import { assertReadingNotDecreasing } from "../../utils/meterReading";
 import { scopeOr } from "../../utils/scope";
 
@@ -36,7 +37,40 @@ interface SaveInput {
   notes?: string | null;
 }
 
-const dataFields = (input: SaveInput) => ({
+interface ContextSnapshot {
+  projectId: number | null;
+  projectCode: string | null;
+  projectName: string | null;
+  sectorId: number | null;
+  sectorName: string | null;
+  equipmentCode: string | null;
+  equipmentName: string | null;
+  contextSource: "SNAPSHOT" | "UNKNOWN";
+}
+
+function captureContext(equipment: {
+  id: number;
+  code: string;
+  name: string;
+  projectId: number | null;
+  sectorId: number | null;
+  project?: { code?: string | null; name?: string | null } | null;
+  sector?: { name?: string | null } | null;
+}): ContextSnapshot {
+  return {
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    equipmentCode: equipment.code,
+    equipmentName: equipment.name,
+    contextSource:
+      equipment.projectId != null || equipment.sectorId != null ? "SNAPSHOT" : "UNKNOWN",
+  };
+}
+
+const dataFields = (input: SaveInput, context?: ContextSnapshot) => ({
   date: toDate(input.date),
   equipmentId: input.equipmentId,
   endMeter: input.endMeter ?? null,
@@ -47,10 +81,25 @@ const dataFields = (input: SaveInput) => ({
   condition: input.condition ?? null,
   conditionNote: input.conditionNote ?? null,
   notes: input.notes ?? null,
+  ...(context
+    ? {
+        projectId: context.projectId,
+        sectorId: context.sectorId,
+        contextSource: context.contextSource,
+        projectCode: context.projectCode,
+        projectName: context.projectName,
+        sectorName: context.sectorName,
+        equipmentCode: context.equipmentCode,
+        equipmentName: context.equipmentName,
+      }
+    : {}),
 });
 
-async function ensureEquipment(equipmentId: number) {
-  const equipment = await prisma.equipment.findUnique({ where: { id: equipmentId } });
+export async function ensureEquipment(equipmentId: number) {
+  const equipment = await prisma.equipment.findUnique({
+    where: { id: equipmentId },
+    include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
+  });
   if (!equipment) {
     throw Object.assign(new Error("المعدة غير موجودة"), { status: 404 });
   }
@@ -124,6 +173,55 @@ export async function save(input: SaveInput, userId: number) {
   const equipment = await ensureEquipment(input.equipmentId);
   assertHoursAllowed(equipment, input);
   const date = toDate(input.date);
+  const provided = (input as {
+    context?: {
+      projectId?: number | null;
+      projectCode?: string | null;
+      projectName?: string | null;
+      sectorId?: number | null;
+      sectorName?: string | null;
+      equipmentCode?: string | null;
+      equipmentName?: string | null;
+      contextSource?: string | null;
+      capturedOffline?: boolean;
+    };
+  }).context;
+
+  // إرسال online: نلتقط السياق من الخادم (لا نثق بسياق العميل).
+  // إرسال offline مؤجّل: نحفظ اللقطة الأصلية.
+  const isOffline = provided?.capturedOffline === true;
+  let offlineTrusted = false;
+  if (isOffline && provided) {
+    const v = verifyAttestation((provided as { attestation?: string }).attestation);
+    if (v.valid && v.claims && attestationMatchesSnapshot(v.claims, provided, input.equipmentId)) {
+      offlineTrusted = true;
+    }
+  }
+  const context: ContextSnapshot = isOffline
+    ? offlineTrusted && provided
+      ? {
+          projectId: provided.projectId ?? null,
+          projectCode: provided.projectCode ?? null,
+          projectName: provided.projectName ?? null,
+          sectorId: provided.sectorId ?? null,
+          sectorName: provided.sectorName ?? null,
+          equipmentCode: provided.equipmentCode ?? null,
+          equipmentName: provided.equipmentName ?? null,
+          contextSource:
+            (provided.contextSource as "SNAPSHOT" | "UNKNOWN" | undefined) ??
+            (provided.projectId != null || provided.sectorId != null ? "SNAPSHOT" : "UNKNOWN"),
+        }
+      : {
+          projectId: null,
+          projectCode: null,
+          projectName: null,
+          sectorId: null,
+          sectorName: null,
+          equipmentCode: equipment.code,
+          equipmentName: equipment.name,
+          contextSource: "UNKNOWN",
+        }
+    : captureContext(equipment);
 
   if (!input.id && equipment.trackingMode !== "KM") {
     await assertMeterNotBelowBaseline(input.equipmentId, date, input.endMeter ?? null);
@@ -149,8 +247,118 @@ export async function save(input: SaveInput, userId: number) {
 
   await assertNoMissingDay(input.equipmentId, date);
 
-  const record = await prisma.dailyLog.create({ data: dataFields(input), include });
+  const record = await prisma.dailyLog.create({
+    data: { ...dataFields(input, context), userId },
+    include,
+  });
   await logAudit(userId, "DailyLog", record.id, "CREATE", { date: input.date });
+  return { record, updated: false };
+}
+
+export async function equipmentContext(equipmentId: number) {
+  const equipment = await prisma.equipment.findUnique({
+    where: { id: equipmentId },
+    include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
+  });
+  if (!equipment) return { contextSource: "UNKNOWN" as const };
+  let projectSectorId: number | null = null;
+  if (equipment.projectId != null && equipment.sectorId != null) {
+    const link = await prisma.projectSector.findFirst({
+      where: { projectId: equipment.projectId, sectorId: equipment.sectorId, active: true },
+      select: { id: true },
+    });
+    projectSectorId = link?.id ?? null;
+  }
+  const attestation = issueAttestation({
+    equipmentId: equipment.id,
+    equipmentCode: equipment.code,
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    projectSectorId,
+  });
+  return {
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    equipmentCode: equipment.code,
+    equipmentName: equipment.name,
+    contextSource:
+      equipment.projectId != null || equipment.sectorId != null ? ("SNAPSHOT" as const) : ("UNKNOWN" as const),
+    capturedAt: new Date().toISOString(),
+    attestation,
+  };
+}
+
+export async function createApproved(
+  input: SaveInput,
+  userId: number,
+  context?: {
+    projectId?: number | null;
+    projectCode?: string | null;
+    projectName?: string | null;
+    sectorId?: number | null;
+    sectorName?: string | null;
+    equipmentCode?: string | null;
+    equipmentName?: string | null;
+    contextSource?: string | null;
+  },
+  db: any = prisma,
+) {
+  const normalized: SaveInput = {
+    ...input,
+    equipmentId: Number(input.equipmentId),
+    endMeter: input.endMeter != null ? Number(input.endMeter) : null,
+    operatingHours: input.operatingHours != null ? Number(input.operatingHours) : null,
+    diesel: input.diesel != null ? Number(input.diesel) : null,
+    productivityCount: input.productivityCount != null ? Number(input.productivityCount) : null,
+  };
+  const equipment = await ensureEquipment(normalized.equipmentId);
+  assertHoursAllowed(equipment, normalized);
+  const date = toDate(normalized.date);
+
+  if (equipment.trackingMode !== "KM") {
+    await assertMeterNotBelowBaseline(normalized.equipmentId, date, normalized.endMeter ?? null);
+  }
+
+  const ctx: ContextSnapshot = {
+    projectId: context?.projectId ?? equipment.projectId ?? null,
+    projectCode: context?.projectCode ?? equipment.project?.code ?? null,
+    projectName: context?.projectName ?? equipment.project?.name ?? null,
+    sectorId: context?.sectorId ?? equipment.sectorId ?? null,
+    sectorName: context?.sectorName ?? equipment.sector?.name ?? null,
+    equipmentCode: context?.equipmentCode ?? equipment.code,
+    equipmentName: context?.equipmentName ?? equipment.name,
+    contextSource:
+      (context?.contextSource as "SNAPSHOT" | "UNKNOWN" | undefined) ??
+      (context?.projectId != null || context?.sectorId != null || equipment.projectId != null || equipment.sectorId != null
+        ? "SNAPSHOT"
+        : "UNKNOWN"),
+  };
+
+  const sameDay = await db.dailyLog.findUnique({
+    where: { date_equipmentId: { date, equipmentId: normalized.equipmentId } },
+  });
+
+  if (sameDay) {
+    const record = await db.dailyLog.update({
+      where: { id: sameDay.id },
+      data: dataFields(normalized),
+      include,
+    });
+    await logAudit(userId, "DailyLog", record.id, "UPDATE", { reason: "review approved (same-day upsert)" });
+    return { record, updated: true };
+  }
+
+  const record = await db.dailyLog.create({
+    data: { ...dataFields(normalized, ctx), userId },
+    include,
+  });
+  await logAudit(userId, "DailyLog", record.id, "CREATE", { date: normalized.date, reason: "review approved" });
   return { record, updated: false };
 }
 
@@ -216,6 +424,7 @@ interface ListParams {
   dateTo?: string;
   equipmentId?: number;
   projectId?: number;
+  sectorId?: number;
   condition?: "GOOD" | "BROKEN" | "STOPPED";
   meterEndFrom?: number;
   meterEndTo?: number;
@@ -243,6 +452,7 @@ function buildWhere({
   dateTo,
   equipmentId,
   projectId,
+  sectorId,
   condition,
   meterEndFrom,
   meterEndTo,
@@ -264,11 +474,12 @@ function buildWhere({
     });
   }
   if (equipmentId) and.push({ equipmentId });
-  if (projectId) and.push({ equipment: { projectId } });
+  if (projectId) and.push({ projectId });
+  if (sectorId) and.push({ sectorId });
   if (condition) and.push({ condition });
   if (code) and.push({ equipment: { code: { contains: code, mode: "insensitive" } } });
   if (name) and.push({ equipment: { name: { contains: name, mode: "insensitive" } } });
-  if (sector) and.push({ equipment: { sector: { name: { contains: sector, mode: "insensitive" } } } });
+  if (sector) and.push({ sectorName: { contains: sector, mode: "insensitive" } });
   if (user) and.push({ user: { name: { contains: user, mode: "insensitive" } } });
   if (productivityType)
     and.push({ productivityType: { contains: productivityType, mode: "insensitive" } });
@@ -326,6 +537,7 @@ export async function list({
   dateTo,
   equipmentId,
   projectId,
+  sectorId,
   condition,
   scope,
   page,
@@ -414,8 +626,8 @@ export async function exportRows(params: Omit<ListParams, "page" | "pageSize">) 
         r.date.toISOString().slice(0, 10),
         r.equipment.code,
         r.equipment.name,
-        r.equipment.project?.name ?? "",
-        r.equipment.sector?.name ?? "",
+        r.projectName ?? r.projectCode ?? "غير محدد",
+        r.sectorName ?? "غير محدد",
         r.endMeter ?? "",
         r.operatingHours ?? "",
         r.diesel ?? "",

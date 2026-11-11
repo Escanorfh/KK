@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import * as maintenanceService from "./maintenance.service";
+import * as reviewService from "../review/review.service";
 
 type ListQuery = {
   q?: string;
@@ -10,6 +11,7 @@ type ListQuery = {
   endDateTo?: string;
   equipmentId?: number;
   projectId?: number;
+  sectorId?: number;
   code?: string;
   name?: string;
   orderType?: string;
@@ -31,8 +33,31 @@ type ListQuery = {
 
 export async function save(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await maintenanceService.create(req.body, req.user!.id);
-    res.status(201).json(result);
+    const role = req.user!.role;
+    if (role === "ROOT" || role === "ADMIN") {
+      const result = await maintenanceService.create(req.body, req.user!.id);
+      res.status(201).json(result);
+      return;
+    }
+    await maintenanceService.ensureEquipment(req.body.equipmentId);
+    const clientCtx = req.body?.context;
+    const isOffline = clientCtx?.capturedOffline === true;
+    let context;
+    if (isOffline) {
+      context = clientCtx;
+    } else {
+      context = await maintenanceService.equipmentContext(req.body.equipmentId);
+    }
+    const result = await reviewService.createReviewRequest(
+      {
+        entity: "maintenance",
+        data: req.body,
+        clientRequestId: req.body?.clientRequestId,
+        context,
+      },
+      req.user!.id,
+    );
+    res.status(202).json({ ...result, pendingReview: true });
   } catch (err) {
     next(err);
   }

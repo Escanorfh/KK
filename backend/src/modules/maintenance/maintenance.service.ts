@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
+import { issueAttestation, verifyAttestation, attestationMatchesSnapshot } from "../../utils/attestation";
 import { assertReadingNotDecreasing } from "../../utils/meterReading";
 import { scopeOr } from "../../utils/scope";
 
@@ -31,6 +32,7 @@ function fail(message: string, status: number): never {
 type PartInput = { name: string; code?: string | null; qty?: number | null; notes?: string | null };
 type SaveInput = {
   workOrderNo?: number | null;
+  clientRequestId?: string | null;
   date: string;
   endDate?: string | null;
   equipmentId: number;
@@ -48,8 +50,11 @@ type SaveInput = {
   parts?: PartInput[];
 };
 
-async function ensureEquipment(equipmentId: number) {
-  const equipment = await prisma.equipment.findUnique({ where: { id: equipmentId } });
+export async function ensureEquipment(equipmentId: number) {
+  const equipment = await prisma.equipment.findUnique({
+    where: { id: equipmentId },
+    include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
+  });
   if (!equipment) {
     fail("المعدة غير موجودة", 404);
   }
@@ -112,7 +117,39 @@ async function nextWorkOrderNo(equipmentId: number): Promise<number | null> {
   return Math.max(base, last._max.workOrderNo ?? 0) + 1;
 }
 
-function dataFields(input: SaveInput) {
+interface ContextSnapshot {
+  projectId: number | null;
+  projectCode: string | null;
+  projectName: string | null;
+  sectorId: number | null;
+  sectorName: string | null;
+  equipmentCode: string | null;
+  equipmentName: string | null;
+  contextSource: "SNAPSHOT" | "UNKNOWN";
+}
+
+function captureContext(equipment: {
+  code: string;
+  name: string;
+  projectId: number | null;
+  sectorId: number | null;
+  project?: { code?: string | null; name?: string | null } | null;
+  sector?: { name?: string | null } | null;
+}): ContextSnapshot {
+  return {
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    equipmentCode: equipment.code,
+    equipmentName: equipment.name,
+    contextSource:
+      equipment.projectId != null || equipment.sectorId != null ? "SNAPSHOT" : "UNKNOWN",
+  };
+}
+
+function dataFields(input: SaveInput, context?: ContextSnapshot) {
   return {
     workOrderNo: input.workOrderNo ?? null,
     date: toDate(input.date),
@@ -129,10 +166,34 @@ function dataFields(input: SaveInput) {
     downtime: input.downtime ?? null,
     status: input.status ?? "NEW",
     notes: input.notes ?? null,
+    ...(context
+      ? {
+          projectId: context.projectId,
+          sectorId: context.sectorId,
+          contextSource: context.contextSource,
+          projectCode: context.projectCode,
+          projectName: context.projectName,
+          sectorName: context.sectorName,
+          equipmentCode: context.equipmentCode,
+          equipmentName: context.equipmentName,
+          clientRequestId: input.clientRequestId ?? null,
+        }
+      : { clientRequestId: input.clientRequestId ?? null }),
   };
 }
 
 export async function create(input: SaveInput, userId: number) {
+  if (input.clientRequestId) {
+    const existing = await prisma.maintenance.findUnique({
+      where: { clientRequestId: input.clientRequestId } as any,
+    });
+    if (existing) {
+      // Re-fetch with include to match normal return shape.
+      const full = await prisma.maintenance.findUnique({ where: { id: existing.id }, include });
+      return { record: full ?? existing, updated: true, duplicate: true };
+    }
+  }
+
   const equipment = await ensureEquipment(input.equipmentId);
   await assertReadingsAllowed({
     equipmentId: input.equipmentId,
@@ -143,14 +204,189 @@ export async function create(input: SaveInput, userId: number) {
   });
 
   const workOrderNo = input.workOrderNo ?? (await nextWorkOrderNo(input.equipmentId));
+  const provided = (input as {
+    context?: {
+      projectId?: number | null;
+      projectCode?: string | null;
+      projectName?: string | null;
+      sectorId?: number | null;
+      sectorName?: string | null;
+      equipmentCode?: string | null;
+      equipmentName?: string | null;
+      contextSource?: string | null;
+      capturedOffline?: boolean;
+    };
+  }).context;
+  const isOffline = provided?.capturedOffline === true;
+  let offlineTrusted = false;
+  if (isOffline && provided) {
+    const v = verifyAttestation((provided as { attestation?: string }).attestation);
+    if (v.valid && v.claims && attestationMatchesSnapshot(v.claims, provided, input.equipmentId)) {
+      offlineTrusted = true;
+    }
+  }
+  const context: ContextSnapshot = isOffline
+    ? offlineTrusted && provided
+      ? {
+          projectId: provided.projectId ?? null,
+          projectCode: provided.projectCode ?? null,
+          projectName: provided.projectName ?? null,
+          sectorId: provided.sectorId ?? null,
+          sectorName: provided.sectorName ?? null,
+          equipmentCode: provided.equipmentCode ?? null,
+          equipmentName: provided.equipmentName ?? null,
+          contextSource:
+            (provided.contextSource as "SNAPSHOT" | "UNKNOWN" | undefined) ??
+            (provided.projectId != null || provided.sectorId != null ? "SNAPSHOT" : "UNKNOWN"),
+        }
+      : {
+          projectId: null,
+          projectCode: null,
+          projectName: null,
+          sectorId: null,
+          sectorName: null,
+          equipmentCode: equipment.code,
+          equipmentName: equipment.name,
+          contextSource: "UNKNOWN",
+        }
+    : captureContext(equipment);
 
-  const record = await prisma.maintenance.create({
+  try {
+    const record = await prisma.maintenance.create({
+      data: {
+        ...dataFields(input, context),
+        workOrderNo,
+        userId,
+        workParts: {
+          create: (input.parts ?? [])
+            .filter((p) => p.name)
+            .map((p) => ({
+              name: p.name,
+              code: p.code ?? null,
+              qty: p.qty ?? null,
+              notes: p.notes ?? null,
+            })),
+        },
+      },
+      include,
+    });
+
+    await logAudit(userId, "Maintenance", record.id, "CREATE", {
+      equipmentId: input.equipmentId,
+      date: input.date,
+    });
+    return { record, updated: false };
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === "P2002" && input.clientRequestId) {
+      const existing = await prisma.maintenance.findUnique({
+        where: { clientRequestId: input.clientRequestId } as any,
+        include,
+      });
+      if (existing) {
+        return { record: existing, updated: true, duplicate: true };
+      }
+    }
+    throw err;
+  }
+}
+
+export async function equipmentContext(equipmentId: number) {
+  const equipment = await prisma.equipment.findUnique({
+    where: { id: equipmentId },
+    include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
+  });
+  if (!equipment) return { contextSource: "UNKNOWN" as const };
+  let projectSectorId: number | null = null;
+  if (equipment.projectId != null && equipment.sectorId != null) {
+    const link = await prisma.projectSector.findFirst({
+      where: { projectId: equipment.projectId, sectorId: equipment.sectorId, active: true },
+      select: { id: true },
+    });
+    projectSectorId = link?.id ?? null;
+  }
+  const attestation = issueAttestation({
+    equipmentId: equipment.id,
+    equipmentCode: equipment.code,
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    projectSectorId,
+  });
+  return {
+    projectId: equipment.projectId ?? null,
+    projectCode: equipment.project?.code ?? null,
+    projectName: equipment.project?.name ?? null,
+    sectorId: equipment.sectorId ?? null,
+    sectorName: equipment.sector?.name ?? null,
+    equipmentCode: equipment.code,
+    equipmentName: equipment.name,
+    contextSource:
+      equipment.projectId != null || equipment.sectorId != null ? ("SNAPSHOT" as const) : ("UNKNOWN" as const),
+    capturedAt: new Date().toISOString(),
+    attestation,
+  };
+}
+
+export async function createApproved(
+  input: SaveInput,
+  userId: number,
+  context?: {
+    projectId?: number | null;
+    projectCode?: string | null;
+    projectName?: string | null;
+    sectorId?: number | null;
+    sectorName?: string | null;
+    equipmentCode?: string | null;
+    equipmentName?: string | null;
+    contextSource?: string | null;
+  },
+  db: any = prisma,
+) {
+  const normalized: SaveInput = {
+    ...input,
+    equipmentId: Number(input.equipmentId),
+    meterReading: input.meterReading != null ? Number(input.meterReading) : null,
+    kmMeter: input.kmMeter != null ? Number(input.kmMeter) : null,
+    downtime: input.downtime != null ? Number(input.downtime) : null,
+    workOrderNo: input.workOrderNo != null ? Number(input.workOrderNo) : null,
+    clientRequestId: input.clientRequestId,
+    parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null ? Number(p.qty) : null })),
+  };
+  const equipment = await ensureEquipment(normalized.equipmentId);
+  await assertReadingsAllowed({
+    equipmentId: normalized.equipmentId,
+    trackingMode: equipment.trackingMode,
+    date: normalized.date,
+    meterReading: normalized.meterReading,
+    kmMeter: normalized.kmMeter,
+  });
+
+  const workOrderNo = normalized.workOrderNo ?? (await nextWorkOrderNo(normalized.equipmentId));
+  const ctx: ContextSnapshot = {
+    projectId: context?.projectId ?? equipment.projectId ?? null,
+    projectCode: context?.projectCode ?? equipment.project?.code ?? null,
+    projectName: context?.projectName ?? equipment.project?.name ?? null,
+    sectorId: context?.sectorId ?? equipment.sectorId ?? null,
+    sectorName: context?.sectorName ?? equipment.sector?.name ?? null,
+    equipmentCode: context?.equipmentCode ?? equipment.code,
+    equipmentName: context?.equipmentName ?? equipment.name,
+    contextSource:
+      (context?.contextSource as "SNAPSHOT" | "UNKNOWN" | undefined) ??
+      (context?.projectId != null || context?.sectorId != null || equipment.projectId != null || equipment.sectorId != null
+        ? "SNAPSHOT"
+        : "UNKNOWN"),
+  };
+
+  const record = await db.maintenance.create({
     data: {
-      ...dataFields(input),
+      ...dataFields(normalized, ctx),
       workOrderNo,
       userId,
       workParts: {
-        create: (input.parts ?? [])
+        create: (normalized.parts ?? [])
           .filter((p) => p.name)
           .map((p) => ({
             name: p.name,
@@ -164,8 +400,9 @@ export async function create(input: SaveInput, userId: number) {
   });
 
   await logAudit(userId, "Maintenance", record.id, "CREATE", {
-    equipmentId: input.equipmentId,
-    date: input.date,
+    equipmentId: normalized.equipmentId,
+    date: normalized.date,
+    reason: "review approved",
   });
   return { record, updated: false };
 }
@@ -243,6 +480,7 @@ interface ListParams {
   endDateTo?: string;
   equipmentId?: number;
   projectId?: number;
+  sectorId?: number;
   code?: string;
   name?: string;
   orderType?: string;
@@ -273,6 +511,7 @@ function buildWhere({
   endDateTo,
   equipmentId,
   projectId,
+  sectorId,
   code,
   name,
   orderType,
@@ -309,7 +548,8 @@ function buildWhere({
     });
   }
   if (equipmentId) and.push({ equipmentId });
-  if (projectId) and.push({ equipment: { projectId } });
+  if (projectId) and.push({ projectId });
+  if (sectorId) and.push({ sectorId });
   if (code) and.push({ equipment: { code: { contains: code, mode: "insensitive" } } });
   if (name) and.push({ equipment: { name: { contains: name, mode: "insensitive" } } });
   if (orderType) and.push({ orderType: { contains: orderType, mode: "insensitive" } });
@@ -430,8 +670,8 @@ export async function exportRows(params: FilterParams) {
         r.endDate ? r.endDate.toISOString().slice(0, 10) : "",
         r.equipment.code,
         r.equipment.name,
-        r.equipment.project?.name ?? "",
-        r.equipment.sector?.name ?? "",
+        r.projectName ?? r.projectCode ?? "غير محدد",
+        r.sectorName ?? "غير محدد",
         r.orderType ?? "",
         r.maintenanceType ?? "",
         r.workshop ?? "",

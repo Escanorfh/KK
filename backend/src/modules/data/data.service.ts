@@ -2,7 +2,7 @@ import * as XLSX from "xlsx";
 import type { WorkStatus, WorkType, Condition } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { managersProjects, normalizeArabic } from "../../utils/managers";
-import { syncSectorsForProject } from "../sectors/sector.service";
+import { ensureSectorLink, syncSectorsForProject } from "../sectors/sector.service";
 import { withDbRetry } from "../../utils/db";
 
 function fail(message: string, status: number): never {
@@ -301,9 +301,8 @@ async function ensureProjectByName(name: string): Promise<number> {
 }
 
 async function ensureSector(projectId: number, name: string): Promise<number> {
-  const existing = await prisma.sector.findFirst({ where: { projectId, name } });
-  if (existing) return existing.id;
-  return (await prisma.sector.create({ data: { projectId, name } })).id;
+  // القطاع التشغيلي بيتعمل/بيتعاد استخدامه مع ربط ProjectSector إجباري — نفس قاعدة M:N
+  return ensureSectorLink(projectId, name);
 }
 
 async function resolveEquipmentBatch(codes: string[], cache: Map<string, number>) {

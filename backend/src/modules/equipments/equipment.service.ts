@@ -1,11 +1,18 @@
 import type { Prisma, TrackingMode } from "@prisma/client";
 import prisma from "../../config/prisma";
+import { issueAttestation } from "../../utils/attestation";
 import { logAudit } from "../../utils/audit";
 import { resolveTrackingSetup, UNCLASSIFIED_CATEGORY } from "./trackingMode";
 import { scopeOr } from "../../utils/scope";
+import { ensureSectorLink } from "../sectors/sector.service";
+import {
+  firstActiveProjectId,
+  hasSectorAssociations,
+  isSectorMemberOfProject,
+} from "../../utils/sectorMembership";
 
 const equipmentInclude = {
-  project: { select: { id: true, name: true } },
+  project: { select: { id: true, code: true, name: true } },
   sector: { select: { id: true, name: true } },
   category: {
     select: { id: true, name: true, defaultTrackingMode: true },
@@ -200,11 +207,34 @@ export async function lookup(code: string, scope?: number[] | null) {
   });
 
   const lower = code.toLowerCase();
-  return results.sort((a, b) => {
+  const sorted = results.sort((a, b) => {
     const aExact = a.code.toLowerCase() === lower ? 0 : 1;
     const bExact = b.code.toLowerCase() === lower ? 0 : 1;
     return aExact - bExact;
   });
+  return await Promise.all(sorted.map(async (eq) => {
+    let projectSectorId: number | null = null;
+    if (eq.projectId != null && eq.sectorId != null) {
+      const link = await prisma.projectSector.findFirst({
+        where: { projectId: eq.projectId, sectorId: eq.sectorId, active: true },
+        select: { id: true },
+      });
+      projectSectorId = link?.id ?? null;
+    }
+    return {
+      ...eq,
+      attestation: issueAttestation({
+        equipmentId: eq.id,
+        equipmentCode: eq.code,
+        projectId: eq.projectId ?? null,
+        projectCode: eq.project?.code ?? null,
+        projectName: eq.project?.name ?? null,
+        sectorId: eq.sectorId ?? null,
+        sectorName: eq.sector?.name ?? null,
+        projectSectorId,
+      }),
+    };
+  }));
 }
 
 interface ListParams {
@@ -328,21 +358,57 @@ export async function list({ q, projectId, page, pageSize, scope }: ListParams) 
     prisma.equipment.count({ where }),
   ]);
 
-  return { data, total, page, pageSize };
+  const dataWithAttestation = await Promise.all(data.map(async (eq) => {
+    let projectSectorId: number | null = null;
+    if (eq.projectId != null && eq.sectorId != null) {
+      const link = await prisma.projectSector.findFirst({
+        where: { projectId: eq.projectId, sectorId: eq.sectorId, active: true },
+        select: { id: true },
+      });
+      projectSectorId = link?.id ?? null;
+    }
+    return {
+      ...eq,
+      attestation: issueAttestation({
+        equipmentId: eq.id,
+        equipmentCode: eq.code,
+        projectId: eq.projectId ?? null,
+        projectCode: eq.project?.code ?? null,
+        projectName: eq.project?.name ?? null,
+        sectorId: eq.sectorId ?? null,
+        sectorName: eq.sector?.name ?? null,
+        projectSectorId,
+      }),
+    };
+  }));
+
+  return { data: dataWithAttestation, total, page, pageSize };
 }
 
-async function resolveProjectSector(projectId?: number | null, sectorId?: number | null) {
+export async function resolveProjectSector(projectId?: number | null, sectorId?: number | null) {
   let resolvedProjectId = projectId ?? null;
 
   if (sectorId) {
-    const sector = await prisma.sector.findUnique({ where: { id: sectorId } });
+    const sector = await prisma.sector.findUnique({
+      where: { id: sectorId },
+      select: {
+        projectId: true,
+        projectSectors: { select: { projectId: true, active: true } },
+      },
+    });
     if (!sector) {
       throw Object.assign(new Error("القطاع غير موجود"), { status: 404 });
     }
-    if (resolvedProjectId && sector.projectId !== resolvedProjectId) {
-      throw Object.assign(new Error("القطاع لا ينتمي لهذا المشروع"), { status: 400 });
+    if (resolvedProjectId) {
+      // القاعدة الانتقالية: أي صف ربط (نشط أو ملغي) بيلغي الرجوع للعمود القديم
+      if (!isSectorMemberOfProject(sector, resolvedProjectId)) {
+        throw Object.assign(new Error("القطاع لا ينتمي لهذا المشروع"), { status: 400 });
+      }
+    } else if (hasSectorAssociations(sector)) {
+      resolvedProjectId = firstActiveProjectId(sector);
+    } else {
+      resolvedProjectId = sector.projectId;
     }
-    resolvedProjectId = sector.projectId;
   }
 
   return { projectId: resolvedProjectId, sectorId: sectorId ?? null };
@@ -680,13 +746,7 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
     const cacheKey = `${projectId}:${name}`;
     const cached = sectorCache.get(cacheKey);
     if (cached) return cached;
-    const existing = await prisma.sector.findFirst({
-      where: { projectId, name: { equals: name, mode: "insensitive" } },
-      select: { id: true },
-    });
-    const id = existing
-      ? existing.id
-      : (await prisma.sector.create({ data: { projectId, name } })).id;
+    const id = await ensureSectorLink(projectId, name);
     sectorCache.set(cacheKey, id);
     result.sectors++;
     return id;

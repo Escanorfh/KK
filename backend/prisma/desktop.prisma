@@ -44,6 +44,8 @@ model User {
   needRequestsCreated NeedRequest[]
   projects            UserProject[]
   oilConsumptions     OilConsumption[]
+  reviewSubmitted     ReviewRequest[] @relation("ReviewSubmitted")
+  reviewReviewed     ReviewRequest[] @relation("ReviewReviewed")
 }
 
 model Project {
@@ -273,6 +275,12 @@ model DailyLog {
   condition         String?
   conditionNote     String?
   notes             String?
+  contextSource     String?
+  projectCode       String?
+  projectName       String?
+  sectorName        String?
+  equipmentCode     String?
+  equipmentName     String?
   userId            Int?
   user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt         DateTime   @default(now())
@@ -300,6 +308,13 @@ model Maintenance {
   downtime        Float?
   status          String     @default("NEW")
   notes           String?
+  contextSource   String?
+  projectCode     String?
+  projectName     String?
+  sectorName      String?
+  equipmentCode   String?
+  equipmentName   String?
+  clientRequestId String?    @unique
   userId          Int?
   user            User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
   workParts       WorkPart[]
@@ -399,6 +414,35 @@ model Fault {
 
 // details/createdIds: Json غير مدعوم على SQLite (مقاس) — بقوا نص JSON، ونفس التحذير بتاع
 // codePrefixes: طبقة القراءة/الكتابة لازم تسلسل وتفك في TASK 02.
+model ReviewRequest {
+  id              Int       @id @default(autoincrement())
+  entity          String
+  status          String    @default("PENDING_REVIEW")
+  clientRequestId String?   @unique
+  submittedById   Int
+  submittedBy     User      @relation("ReviewSubmitted", fields: [submittedById], references: [id], onDelete: Restrict)
+  submittedAt     DateTime  @default(now())
+  reviewedById    Int?
+  reviewedBy      User?     @relation("ReviewReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  rejectionReason String?
+  submittedData   String
+  reviewedData    String?
+  equipmentId     Int?
+  projectId       Int?
+  sectorId        Int?
+  projectName     String?
+  projectCode     String?
+  sectorName      String?
+  equipmentCode   String?
+  equipmentName   String?
+  contextSource   String?
+  capturedAt      DateTime?
+  recordId        Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
 model AuditLog {
   id        Int      @id @default(autoincrement())
   userId    Int?

@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "build:deploy": "prisma generate && tsc",
-    "test": "tsx --test src/modules/part-schedules/partSchedule.alerts.test.ts src/modules/need-requests/needRequest.sector.test.ts src/modules/sectors/sector.sync.test.ts src/utils/scope.test.ts",
+    "test": "tsx --test src/app.error.test.ts src/modules/part-schedules/partSchedule.alerts.test.ts src/modules/need-requests/needRequest.sector.test.ts src/modules/sectors/sector.sync.test.ts src/modules/sectors/sector.associations.test.ts src/modules/sectors/sector.link.test.ts src/modules/sectors/sector.delete.test.ts src/modules/projects/project.list.test.ts src/modules/equipments/equipment.sector.test.ts src/utils/projectSectorBackfill.test.ts src/utils/scope.test.ts src/utils/attestation.test.ts src/modules/review/review.smoke.test.ts",
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

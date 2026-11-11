@@ -21,6 +21,7 @@ const saveDailyLogBase = z.object({
   condition: z.enum(["GOOD", "BROKEN", "STOPPED"]).nullable().optional(),
   conditionNote: optionalText,
   notes: optionalText,
+  clientRequestId: z.string().trim().min(1).max(120).optional(),
 });
 
 export const saveDailyLogSchema = saveDailyLogBase;
@@ -42,6 +43,7 @@ export const listDailyLogQuerySchema = z.object({
   dateTo: dateStr.optional(),
   equipmentId: z.coerce.number().int().optional(),
   projectId: z.coerce.number().int().optional(),
+  sectorId: z.coerce.number().int().optional(),
   condition: z.enum(["GOOD", "BROKEN", "STOPPED"]).optional(),
   meterEndFrom: z.coerce.number().min(0).optional(),
   meterEndTo: z.coerce.number().min(0).optional(),

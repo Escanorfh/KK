@@ -62,9 +62,9 @@ const fInput =
   "w-full min-w-0 text-[11px] px-1.5 py-1 rounded-md border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500";
 
 const thCls =
-  "px-3 py-2 text-right text-xs font-bold text-slate-600 bg-slate-50 border-b border-slate-200 whitespace-nowrap sticky top-[45px] z-20 h-[36px]";
+  "px-3 py-2 text-right text-xs font-bold text-slate-600 bg-slate-50 border-b border-slate-200 whitespace-nowrap h-[36px]";
 const tfCls =
-  "px-1.5 py-1 bg-slate-50/80 border-b-2 border-slate-200 sticky top-[81px] z-20 align-top";
+  "px-1.5 py-1 bg-slate-50/80 border-b-2 border-slate-200 align-top";
 const tdCls = "px-3 py-2 text-[13px] text-slate-700 border-b border-slate-100 align-middle";
 
 export default function DataWorkPage() {
@@ -442,7 +442,7 @@ export default function DataWorkPage() {
                       {rec.equipment.name}
                     </td>
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
-                      {rec.equipment.project?.name || "—"}
+                      {rec.projectName || rec.projectCode || "غير محدد"}
                     </td>
                     <td className={cn(tdCls, "text-xs whitespace-nowrap")}>{rec.orderType || "—"}</td>
                     <td className={cn(tdCls, "text-xs whitespace-nowrap text-slate-600")}>
@@ -588,8 +588,8 @@ export default function DataWorkPage() {
                   detail.endDate ? detail.endDate.slice(0, 10) : "",
                   true
                 )}
-                {dField("المشروع", detail.equipment.project?.name || "")}
-                {dField("القطاع", detail.equipment.sector?.name || "")}
+                {dField("المشروع", detail.projectName || detail.projectCode || "غير محدد")}
+                {dField("القطاع", detail.sectorName || "غير محدد")}
                 {dField("نوع أمر الشغل", detail.orderType)}
                 {dField("الورشة", detail.workshop)}
                 {dField("العداد النهائي", detail.meterReading, true)}

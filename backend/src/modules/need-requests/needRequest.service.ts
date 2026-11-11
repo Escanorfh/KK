@@ -1,6 +1,7 @@
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { scopeOr } from "../../utils/scope";
+import { isSectorMemberOfProject } from "../../utils/sectorMembership";
 import type { NeedRequestStatus } from "@prisma/client";
 import {
   ManagersApiError,
@@ -82,14 +83,20 @@ async function assertProject(projectId: number) {
 }
 
 // التحقق من القطاع وعلاقته بالمشروع المختار — في السيرفر مش الواجهة فقط
+// القاعدة الانتقالية: ربط نشط، أو قطاع بلا أي روابط وعمود قديم مطابق
 async function assertSector(sectorId: number, projectId: number | null | undefined) {
   const sector = await prisma.sector.findUnique({
     where: { id: sectorId },
-    select: { id: true, name: true, projectId: true },
+    select: {
+      id: true,
+      name: true,
+      projectId: true,
+      projectSectors: { select: { projectId: true, active: true } },
+    },
   });
   if (!sector) fail("القطاع غير موجود", 404);
   if (projectId == null) fail(`القطاع «${sector.name}» يحتاج مشروعًا محددًا أولًا`, 422);
-  if (sector.projectId !== projectId) {
+  if (!isSectorMemberOfProject(sector, projectId)) {
     fail(`القطاع «${sector.name}» لا يتبع المشروع المحدد — اختر قطاعًا من قطاعات المشروع`, 422);
   }
   return sector;
@@ -317,9 +324,24 @@ export async function update(
         fail("لا يمكن تغيير القطاع بعد ربط الطلب بنظام المدرين — نظام المدرين بيقبل القطاع عند الإنشاء فقط", 409);
       }
       await assertSector(nextSectorId, nextProjectId);
-    } else if (existing.sector?.projectId !== nextProjectId) {
-      nextSectorId = null;
-      sectorCleared = true;
+    } else if (nextProjectId !== existing.projectId) {
+      // المشروع اتغير والقطاع مش مبعوت: نتحقق من العضوية الفعلية بدل مقارنة العمود القديم.
+      // القطاع المرتبط M:N بمشروعه الجديد ما يتلغيش حتى لو أصله القديم لمشروع تاني.
+      const retained = await prisma.sector.findUnique({
+        where: { id: nextSectorId },
+        select: {
+          projectId: true,
+          projectSectors: { select: { projectId: true, active: true } },
+        },
+      });
+      const stillMember =
+        retained != null &&
+        nextProjectId != null &&
+        isSectorMemberOfProject(retained, nextProjectId);
+      if (!stillMember) {
+        nextSectorId = null;
+        sectorCleared = true;
+      }
     }
   }
 

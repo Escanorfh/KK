@@ -7,7 +7,8 @@ import { getApiError, getApiFieldErrors } from "@/lib/api";
 import { isQueued } from "@/lib/offline/queue";
 import { lookupEquipment, createEquipment, getLastMeter, type LastMeter } from "@/services/equipments";
 import { saveDailyLog, listDailyLogs, listAllDailyLogs, productivityTypes } from "@/services/dailylogs";
-import { projectOptions } from "@/services/projects";
+import { projectOptions, listSectors } from "@/services/projects";
+import type { SectorRow } from "@/services/projects";
 import type { DailyLog, Equipment, Project, TrackingMode } from "@/types";
 
 const inputCls =
@@ -19,7 +20,11 @@ interface FormState {
   equipmentId: number | null;
   code: string;
   equipmentName: string;
+  projectId: number | null;
+  projectCode: string | null;
+  sectorId: number | null;
   projectName: string;
+  attestation: string | null;
   sectorName: string;
   trackingMode: TrackingMode;
   endMeter: string;
@@ -36,7 +41,11 @@ const emptyForm: FormState = {
   equipmentId: null,
   code: "",
   equipmentName: "",
+  projectId: null,
+  projectCode: null,
+  sectorId: null,
   projectName: "",
+  attestation: null,
   sectorName: "",
   trackingMode: "BOTH",
   endMeter: "",
@@ -71,8 +80,10 @@ export default function DayPage() {
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
-  const [projects, setProjects] = useState<Pick<Project, "id" | "name">[]>([]);
+  const [projects, setProjects] = useState<Pick<Project, "id" | "code" | "name">[]>([]);
   const [projectFilter, setProjectFilter] = useState("");
+  const [sectorFilter, setSectorFilter] = useState("");
+  const [sectors, setSectors] = useState<SectorRow[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [newEqName, setNewEqName] = useState("");
   const [newEqProject, setNewEqProject] = useState("");
@@ -89,10 +100,11 @@ export default function DayPage() {
   const loadRecords = useCallback(async () => {
     setRecordsLoading(true);
     const projectId = projectFilter ? Number(projectFilter) : undefined;
+    const sectorId = sectorFilter ? Number(sectorFilter) : undefined;
     try {
       const [probe, today] = await Promise.all([
-        listDailyLogs({ dateTo: dayBefore(date), projectId, pageSize: 1 }),
-        listAllDailyLogs({ dateFrom: date, dateTo: date, projectId }),
+        listDailyLogs({ dateTo: dayBefore(date), projectId, sectorId, pageSize: 1 }),
+        listAllDailyLogs({ dateFrom: date, dateTo: date, projectId, sectorId }),
       ]);
       setRecordedToday(new Set(today.data.map((r) => r.equipmentId)));
       const prevDay = probe.data[0]?.date.slice(0, 10) ?? null;
@@ -101,14 +113,40 @@ export default function DayPage() {
         setRecords([]);
         return;
       }
-      const res = await listAllDailyLogs({ dateFrom: prevDay, dateTo: prevDay, projectId });
+      const res = await listAllDailyLogs({ dateFrom: prevDay, dateTo: prevDay, projectId, sectorId });
       setRecords(res.data);
     } catch (err) {
       toast.error(getApiError(err));
     } finally {
       setRecordsLoading(false);
     }
-  }, [date, projectFilter]);
+  }, [date, projectFilter, sectorFilter]);
+
+  useEffect(() => {
+    const pid = projectFilter ? Number(projectFilter) : undefined;
+    listSectors(pid)
+      .then((s) => {
+        setSectors(s);
+        if (sectorFilter && !s.some((x) => String(x.id) === sectorFilter)) {
+          setSectorFilter("");
+        }
+      })
+      .catch(() => setSectors([]));
+  }, [projectFilter]);
+
+  // Re-resolve project context once Projects finish loading.
+  useEffect(() => {
+    if (!form.equipmentId || form.projectName) return;
+    if (!form.projectId) return;
+    const resolved = projects.find((p) => p.id === form.projectId);
+    if (resolved) {
+      setForm((f) => ({
+        ...f,
+        projectCode: f.projectCode ?? resolved.code ?? null,
+        projectName: resolved.name,
+      }));
+    }
+  }, [projects]);
 
   useEffect(() => {
     loadRecords();
@@ -225,12 +263,18 @@ export default function DayPage() {
   }, [form.code, form.equipmentId, form.id]);
 
   const selectEquipment = (eq: Equipment) => {
+    const resolvedProject =
+      eq.project ?? projects.find((p) => p.id === (eq.projectId ?? eq.project?.id ?? null)) ?? null;
     setForm((f) => ({
       ...f,
       equipmentId: eq.id,
       code: eq.code,
       equipmentName: eq.name,
-      projectName: eq.project?.name || "",
+      projectId: eq.projectId ?? resolvedProject?.id ?? null,
+      projectCode: eq.project?.code ?? resolvedProject?.code ?? null,
+      sectorId: eq.sectorId ?? eq.sector?.id ?? null,
+      attestation: eq.attestation ?? f.attestation ?? null,
+      projectName: eq.project?.name || resolvedProject?.name || "",
       sectorName: eq.sector?.name || "",
       trackingMode: eq.trackingMode,
     }));
@@ -308,14 +352,33 @@ export default function DayPage() {
         productivityCount: toNumberOrNull(form.productivityCount),
         condition: form.condition || null,
         notes: form.notes || null,
+        clientRequestId: crypto.randomUUID(),
+        context: {
+          projectId: form.projectId,
+          projectCode: form.projectCode,
+          sectorId: form.sectorId,
+          projectName: form.projectName || null,
+          sectorName: form.sectorName || null,
+          equipmentCode: form.code,
+          equipmentName: form.equipmentName,
+          contextSource: (form.projectId != null || form.sectorId != null ? "SNAPSHOT" : "UNKNOWN") as "SNAPSHOT" | "UNKNOWN",
+          capturedAt: new Date().toISOString(),
+          attestation: form.attestation,
+        },
       });
       if (isQueued(res)) {
         toast("تم حفظ اليومية على الجهاز — ستُرسل للسيرفر تلقائيًا عند عودة الاتصال", { icon: "📴" });
         resetForm();
         return;
       }
+      if ("pendingReview" in res && res.pendingReview) {
+        toast("تم إرسال السجل للمراجعة — بانتظار اعتماد ROOT/ADMIN", { icon: "⏳" });
+        resetForm();
+        loadRecords();
+        return;
+      }
       toast.success(
-        res.updated
+        (res as { updated?: boolean }).updated
           ? "تم تحديث السجل الموجود بنفس التاريخ والمعدة"
           : "تم حفظ السجل في قاعدة البيانات"
       );
@@ -336,8 +399,12 @@ export default function DayPage() {
       equipmentId: rec.equipmentId,
       code: rec.equipment.code,
       equipmentName: rec.equipment.name,
+      projectId: rec.equipment.project?.id ?? null,
+      projectCode: rec.equipment.project?.code ?? null,
+      sectorId: rec.equipment.sector?.id ?? null,
       projectName: rec.equipment.project?.name || "",
       sectorName: rec.equipment.sector?.name || "",
+      attestation: null,
       trackingMode: rec.equipment.trackingMode,
       endMeter: rec.endMeter != null ? String(rec.endMeter) : "",
       operatingHours: rec.operatingHours != null ? String(rec.operatingHours) : "",
@@ -359,8 +426,12 @@ export default function DayPage() {
       equipmentId: rec.equipmentId,
       code: rec.equipment.code,
       equipmentName: rec.equipment.name,
+      projectId: rec.equipment.project?.id ?? null,
+      projectCode: rec.equipment.project?.code ?? null,
+      sectorId: rec.equipment.sector?.id ?? null,
       projectName: rec.equipment.project?.name || "",
       sectorName: rec.equipment.sector?.name || "",
+      attestation: null,
       trackingMode: rec.equipment.trackingMode,
       endMeter: rec.endMeter != null ? String(rec.endMeter) : "",
       operatingHours: rec.operatingHours != null ? String(rec.operatingHours) : "",
@@ -425,6 +496,24 @@ export default function DayPage() {
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="bg-white border border-slate-300 rounded-lg px-3 py-2 flex items-center gap-2">
+            <label className="text-[13px] font-semibold text-slate-600" htmlFor="day-sector-filter">
+              القطاع
+            </label>
+            <select
+              id="day-sector-filter"
+              value={sectorFilter}
+              onChange={(e) => setSectorFilter(e.target.value)}
+              className="text-sm outline-none bg-transparent max-w-[170px]"
+            >
+              <option value="">كل القطاعات</option>
+              {sectors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
                 </option>
               ))}
             </select>

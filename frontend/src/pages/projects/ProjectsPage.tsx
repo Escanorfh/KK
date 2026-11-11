@@ -9,13 +9,16 @@ import {
   Search,
   FolderKanban,
   Layers,
+  Link2,
+  Unlink2,
   ChevronRight,
   ChevronLeft,
   X,
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getApiError, getApiFieldErrors } from "@/lib/api";
+import { getApiError, getApiFieldErrors, isOfflineError } from "@/lib/api";
+import { kvDeleteByPrefix } from "@/lib/offline/db";
 import { useAuth } from "@/context/AuthContext";
 import type { Project } from "@/types";
 import {
@@ -28,6 +31,8 @@ import {
   createSector,
   updateSector,
   deleteSector,
+  associateSectorProject,
+  removeSectorProject,
   managersSectorOptions,
   linkSectorManagersRoom,
   type SectorRow,
@@ -41,6 +46,15 @@ const thCls = "px-3 py-2.5 text-right text-xs font-bold text-slate-600 bg-slate-
 const tdCls = "px-3 py-2.5 text-[13px] text-slate-700 border-b border-slate-100";
 
 const PAGE_SIZE = 20;
+
+/** رسالة واضحة لعمليات الربط لأنها online-only ومش بتتحفظ في الـ outbox */
+const OFFLINE_ASSOC_MSG =
+  "ربط/فك ارتباط القطاعات يحتاج اتصالًا بالسيرفر — لم يتم تنفيذ أي تغيير ولم يُحفظ شيء محليًا";
+
+/** يمسح كاش قراءات القطاعات والمشاريع فقط بعد تغيير علاقة — من غير لمس الـ outbox */
+async function invalidateProjectSectorCaches() {
+  await Promise.allSettled([kvDeleteByPrefix("/sectors?"), kvDeleteByPrefix("/projects?")]);
+}
 
 interface FormState {
   code: string;
@@ -77,6 +91,13 @@ export default function ProjectsPage() {
   const [managersWarning, setManagersWarning] = useState<string | null>(null);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [linkingSectorId, setLinkingSectorId] = useState<number | null>(null);
+  const [linkPanelOpen, setLinkPanelOpen] = useState(false);
+  const [linkCandidates, setLinkCandidates] = useState<SectorRow[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidateId, setCandidateId] = useState<number | "">("");
+  const [associating, setAssociating] = useState(false);
+  const [unlinkingSectorId, setUnlinkingSectorId] = useState<number | null>(null);
+  const [deletingSectorId, setDeletingSectorId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -184,6 +205,9 @@ export default function ProjectsPage() {
     setManagersRooms([]);
     setManagersWarning(null);
     setSectorsLoading(true);
+    setLinkPanelOpen(false);
+    setLinkCandidates([]);
+    setCandidateId("");
     // القطاعات بتتجلب أوتوماتيك مع المزامنة — هنا لسه بنجيبها للمراجعة اليدوية وإدارة الربط
     setRoomsLoading(true);
     managersSectorOptions(p.id)
@@ -203,8 +227,41 @@ export default function ProjectsPage() {
     }
   };
 
+  const closeSectors = () => {
+    setSectorProject(null);
+    setLinkPanelOpen(false);
+    setLinkCandidates([]);
+    setCandidateId("");
+    setEditSector(null);
+  };
+
+  /** قطاعات المشاريع الأخرى المتاحة للمستخدم — بنفس نطاق السيرفر، مافيش كشف لمشاريع خارج الصلاحية */
+  const loadLinkCandidates = async (projectId: number) => {
+    setCandidatesLoading(true);
+    try {
+      const all = await listSectors();
+      setLinkCandidates(all);
+      setCandidateId((cur) => {
+        if (cur === "") return cur;
+        const row = all.find((s) => s.id === cur);
+        const linked = (row?.projects ?? []).some((l) => l.active && l.projectId === projectId);
+        return linked ? "" : cur;
+      });
+    } catch (err2) {
+      toast.error(getApiError(err2));
+    } finally {
+      setCandidatesLoading(false);
+    }
+  };
+
+  const openLinkPanel = async () => {
+    if (!sectorProject || !canManage) return;
+    setLinkPanelOpen(true);
+    await loadLinkCandidates(sectorProject.id);
+  };
+
   const linkSector = async (s: SectorRow, managersRoomId: number | null) => {
-    if (!sectorProject) return;
+    if (!sectorProject || !canManage) return;
     setLinkingSectorId(s.id);
     try {
       await linkSectorManagersRoom(s.id, managersRoomId);
@@ -213,6 +270,7 @@ export default function ProjectsPage() {
           ? `تم إلغاء ربط القطاع «${s.name}»`
           : `تم ربط القطاع «${s.name}» بقطاع المدرين`
       );
+      await invalidateProjectSectorCaches();
       setSectors(await listSectors(sectorProject.id));
     } catch (err2) {
       toast.error(getApiError(err2));
@@ -222,7 +280,7 @@ export default function ProjectsPage() {
   };
 
   const addSector = async () => {
-    if (!sectorProject) return;
+    if (!sectorProject || !canManage) return;
     if (newSector.trim().length < 2) {
       toast.error("اسم القطاع مطلوب (حرفان على الأقل)");
       return;
@@ -232,6 +290,7 @@ export default function ProjectsPage() {
       await createSector({ projectId: sectorProject.id, name: newSector.trim() });
       toast.success("تمت إضافة القطاع");
       setNewSector("");
+      await invalidateProjectSectorCaches();
       setSectors(await listSectors(sectorProject.id));
       load();
     } catch (err2) {
@@ -242,7 +301,7 @@ export default function ProjectsPage() {
   };
 
   const saveSector = async () => {
-    if (!sectorProject || !editSector) return;
+    if (!sectorProject || !editSector || !canManage) return;
     if (editSector.name.trim().length < 2) {
       toast.error("اسم القطاع مطلوب (حرفان على الأقل)");
       return;
@@ -252,6 +311,7 @@ export default function ProjectsPage() {
       await updateSector(editSector.id, editSector.name.trim());
       toast.success("تم تحديث القطاع");
       setEditSector(null);
+      await invalidateProjectSectorCaches();
       setSectors(await listSectors(sectorProject.id));
     } catch (err2) {
       toast.error(getApiError(err2));
@@ -260,18 +320,88 @@ export default function ProjectsPage() {
     }
   };
 
-  const removeSector = async (s: SectorRow) => {
-    if (!sectorProject) return;
-    if (!window.confirm(`حذف القطاع "${s.name}"؟`)) return;
+  /** ربط قطاع موجود (ROOT/ADMIN فقط) — من غير إنشاء سجل قطاع جديد */
+  const associateExistingSector = async () => {
+    if (!sectorProject || !canManage || candidateId === "") return;
+    const candidate = linkCandidates.find((s) => s.id === candidateId);
+    setAssociating(true);
     try {
-      await deleteSector(s.id);
-      toast.success("تم حذف القطاع");
+      await associateSectorProject(Number(candidateId), sectorProject.id);
+      toast.success(`تم ربط القطاع «${candidate?.name ?? candidateId}» بالمشروع`);
+      setCandidateId("");
+      await invalidateProjectSectorCaches();
       setSectors(await listSectors(sectorProject.id));
+      await loadLinkCandidates(sectorProject.id);
       load();
     } catch (err2) {
-      toast.error(getApiError(err2));
+      const status = (err2 as { response?: { status?: number } })?.response?.status;
+      toast.error(isOfflineError(err2) ? OFFLINE_ASSOC_MSG : getApiError(err2));
+      // 409 معناه الحالة على السيرفر مختلفة عن الشاشة — نعيد المزامنة بدل التخمين
+      if (status === 409) {
+        await invalidateProjectSectorCaches();
+        setSectors(await listSectors(sectorProject.id));
+        await loadLinkCandidates(sectorProject.id);
+      }
+    } finally {
+      setAssociating(false);
     }
   };
+
+  /** فك ارتباط (soft) — مش بيحذف القطاع ولا سجلاته */
+  const unlinkSector = async (s: SectorRow) => {
+    if (!sectorProject || !canManage) return;
+    if (
+      !window.confirm(
+        `فك ارتباط القطاع «${s.name}» عن مشروع «${sectorProject.name}»؟\nالقطاع وسجلاته التاريخية هتفضل موجودة، وهيتشال من هذا المشروع فقط.`
+      )
+    )
+      return;
+    setUnlinkingSectorId(s.id);
+    try {
+      await removeSectorProject(s.id, sectorProject.id);
+      toast.success(`تم فك ارتباط القطاع «${s.name}» عن المشروع`);
+      await invalidateProjectSectorCaches();
+      setSectors(await listSectors(sectorProject.id));
+      if (linkPanelOpen) await loadLinkCandidates(sectorProject.id);
+      load();
+    } catch (err2) {
+      toast.error(isOfflineError(err2) ? OFFLINE_ASSOC_MSG : getApiError(err2));
+    } finally {
+      setUnlinkingSectorId(null);
+    }
+  };
+
+  /** حذف نهائي منفصل تمامًا عن فك الارتباط — السيرفر بيرفض لو فيه أي مرجع */
+  const removeSector = async (s: SectorRow) => {
+    if (!sectorProject || !canManage) return;
+    if (
+      !window.confirm(
+        `حذف القطاع «${s.name}» نهائيًا من كل المشاريع؟\n` +
+          "مش ممكن التراجع. لو القطاع مرتبط بمعدات أو سجلات تشغيلية/تاريخية، السيرفر هيرفض الحذف."
+      )
+    )
+      return;
+    setDeletingSectorId(s.id);
+    try {
+      await deleteSector(s.id);
+      toast.success("تم حذف القطاع نهائيًا");
+      await invalidateProjectSectorCaches();
+      setSectors(await listSectors(sectorProject.id));
+      if (linkPanelOpen) await loadLinkCandidates(sectorProject.id);
+      load();
+    } catch (err2) {
+      toast.error(isOfflineError(err2) ? OFFLINE_ASSOC_MSG : getApiError(err2));
+    } finally {
+      setDeletingSectorId(null);
+    }
+  };
+
+  const linkedSectorIds = new Set(sectors.map((s) => s.id));
+  const availableLinkCandidates = linkCandidates.filter((s) => {
+    if (!sectorProject) return false;
+    if (linkedSectorIds.has(s.id)) return false;
+    return !(s.projects ?? []).some((l) => l.active && l.projectId === sectorProject.id);
+  });
 
   return (
     <div className="space-y-4">
@@ -502,10 +632,10 @@ export default function ProjectsPage() {
       {sectorProject && (
         <div
           className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4"
-          onClick={() => setSectorProject(null)}
+          onClick={closeSectors}
         >
           <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-lg p-4 space-y-3"
+            className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-2">
@@ -514,35 +644,108 @@ export default function ProjectsPage() {
                 قطاعات مشروع {sectorProject.name}
               </h3>
               <button
-                onClick={() => setSectorProject(null)}
+                onClick={closeSectors}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                value={newSector}
-                onChange={(e) => setNewSector(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void addSector();
-                  }
-                }}
-                placeholder="اسم القطاع الجديد..."
-                className={inputCls}
-              />
-              <button
-                onClick={() => void addSector()}
-                disabled={sectorSaving}
-                className="flex items-center gap-1.5 shrink-0 bg-primary-700 hover:bg-primary-800 disabled:opacity-60 text-white text-xs font-bold rounded-lg px-4 py-2.5 transition-colors"
-              >
-                {sectorSaving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                إضافة
-              </button>
-            </div>
+            {canManage && (
+              <div className="flex items-center gap-2">
+                <input
+                  value={newSector}
+                  onChange={(e) => setNewSector(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void addSector();
+                    }
+                  }}
+                  placeholder="اسم القطاع الجديد..."
+                  className={inputCls}
+                />
+                <button
+                  onClick={() => void addSector()}
+                  disabled={sectorSaving}
+                  className="flex items-center gap-1.5 shrink-0 bg-primary-700 hover:bg-primary-800 disabled:opacity-60 text-white text-xs font-bold rounded-lg px-4 py-2.5 transition-colors"
+                >
+                  {sectorSaving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  إضافة
+                </button>
+              </div>
+            )}
+
+            {canManage && (
+              <div className="rounded-lg border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (linkPanelOpen) setLinkPanelOpen(false);
+                    else void openLinkPanel();
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-[12px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Link2 size={14} className="text-primary-600" />
+                    ربط قطاع موجود بالمشروع
+                  </span>
+                  <ChevronLeft
+                    size={14}
+                    className={cn("text-slate-400 transition-transform", linkPanelOpen && "-rotate-90")}
+                  />
+                </button>
+                {linkPanelOpen && (
+                  <div className="border-t border-slate-100 px-3 py-2 space-y-2">
+                    {candidatesLoading ? (
+                      <div className="text-[12px] text-slate-400 py-2 text-center">
+                        <Loader2 size={14} className="animate-spin inline ml-1.5" /> جاري تحميل القطاعات المتاحة...
+                      </div>
+                    ) : availableLinkCandidates.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 py-1">
+                        لا توجد قطاعات أخرى متاحة للربط داخل نطاق صلاحيتك — كل القطاعات المتاحة مرتبطة بالفعل بهذا
+                        المشروع.
+                      </p>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={candidateId}
+                          onChange={(e) => setCandidateId(e.target.value ? Number(e.target.value) : "")}
+                          disabled={associating}
+                          className={cn(inputCls, "py-1.5 text-[12px]")}
+                        >
+                          <option value="">اختر قطاعًا موجودًا...</option>
+                          {availableLinkCandidates.map((s) => {
+                            const projectNames = (s.projects ?? [])
+                              .filter((l) => l.active)
+                              .map((l) => l.project?.name ?? `#${l.projectId}`);
+                            return (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                                {projectNames.length ? ` — ${projectNames.join("، ")}` : ""}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => void associateExistingSector()}
+                          disabled={associating || candidateId === ""}
+                          className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary-700 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-800 disabled:opacity-60"
+                        >
+                          {associating ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                          ربط
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      الربط بيعيد استخدام سجل القطاع الموجود ويفعّل ربطه بالمشروع — مافيش قطاع جديد بيتعمل. متاح لـ
+                      ROOT/ADMIN فقط.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
               كل قطاع هنا لازم يتربط بقطاع نظام المدرين (room_id) عشان طلبات الاحتياج تقدر تُرسل — القطاعات بتتجلب
@@ -560,11 +763,17 @@ export default function ProjectsPage() {
                 </div>
               ) : sectors.length === 0 ? (
                 <div className="px-3 py-6 text-center text-slate-400 text-sm">
-                  لا توجد قطاعات — أضف أول قطاع
+                  {canManage ? "لا توجد قطاعات — أضف أول قطاع" : "لا توجد قطاعات مرتبطة بهذا المشروع"}
                 </div>
               ) : (
                 sectors.map((s) => {
-                  const editing = editSector?.id === s.id;
+                  const editing = canManage && editSector?.id === s.id;
+                  const activeLinks = (s.projects ?? []).filter((l) => l.active);
+                  const otherProjects = activeLinks.filter((l) => l.projectId !== sectorProject.id);
+                  const currentLink = activeLinks.find((l) => l.projectId === sectorProject.id);
+                  // projects غائبة في كاش قديم — نسيبه للسيرفر يقرر بدل التخمين
+                  const unlinkKnown = s.projects !== undefined;
+                  const canUnlink = !unlinkKnown || (currentLink != null && currentLink.id != null);
                   return (
                     <div key={s.id} className="flex items-center gap-2 px-3 py-2">
                       {editing ? (
@@ -584,43 +793,79 @@ export default function ProjectsPage() {
                         />
                       ) : (
                         <>
-                          <span className="flex-1 text-[13px] font-semibold text-slate-700 truncate">
-                            {s.name}
-                          </span>
-                          <select
-                            value={s.managersRoomId ?? ""}
-                            disabled={linkingSectorId === s.id || (!managersRooms.length && !s.managersRoomId)}
-                            onChange={(e) =>
-                              void linkSector(s, e.target.value ? Number(e.target.value) : null)
-                            }
-                            title="قطاع نظام المدرين المطابق — مطلوب لإرسال طلبات الاحتياج"
-                            className={cn(
-                              inputCls,
-                              "w-48 py-1.5 text-[12px] shrink-0",
-                              s.managersRoomId == null && "border-amber-300 bg-amber-50 text-amber-800"
+                          <span className="flex-1 min-w-0 text-[13px] font-semibold text-slate-700">
+                            <span className="block truncate">{s.name}</span>
+                            {otherProjects.length > 0 && (
+                              <span
+                                className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-sky-700"
+                                title="مرتبط بمشاريع أخرى مرئية لك — العضوية النهائية على السيرفر"
+                              >
+                                <Link2 size={11} className="shrink-0" />
+                                <span className="truncate">
+                                  مشترك مع:{" "}
+                                  {otherProjects
+                                    .map((l) => l.project?.name ?? `#${l.projectId}`)
+                                    .join("، ")}
+                                </span>
+                              </span>
                             )}
-                          >
-                            <option value="">
+                          </span>
+                          {canManage ? (
+                            <>
+                              <select
+                                value={s.managersRoomId ?? ""}
+                                disabled={linkingSectorId === s.id || (!managersRooms.length && !s.managersRoomId)}
+                                onChange={(e) =>
+                                  void linkSector(s, e.target.value ? Number(e.target.value) : null)
+                                }
+                                title="قطاع نظام المدرين المطابق — مطلوب لإرسال طلبات الاحتياج"
+                                className={cn(
+                                  inputCls,
+                                  "w-48 py-1.5 text-[12px] shrink-0",
+                                  s.managersRoomId == null && "border-amber-300 bg-amber-50 text-amber-800"
+                                )}
+                              >
+                                <option value="">
+                                  {roomsLoading
+                                    ? "جاري جلب قطاعات المدرين..."
+                                    : managersRooms.length
+                                      ? "غير مربوط — اختر قطاعًا"
+                                      : "لا توجد قطاعات عند المدرين"}
+                                </option>
+                                {managersRooms.map((r) => (
+                                  <option key={r.id} value={r.id}>
+                                    {r.title} ({r.id})
+                                  </option>
+                                ))}
+                                {/* ربط قديم اختفى من قائمة التوكن — نظهره عشان الإلغاء يفضل متاح */}
+                                {s.managersRoomId != null &&
+                                  !managersRooms.some((r) => r.id === s.managersRoomId) && (
+                                    <option value={s.managersRoomId}>
+                                      {s.managersRoomTitle ?? `معرّف ${s.managersRoomId}`} (لم يعد مصرّح به)
+                                    </option>
+                                  )}
+                              </select>
+                              {linkingSectorId === s.id && (
+                                <Loader2 size={14} className="animate-spin text-slate-400 shrink-0" />
+                              )}
+                            </>
+                          ) : (
+                            <span
+                              className={cn(
+                                "w-48 shrink-0 truncate text-[11px]",
+                                s.managersRoomId == null ? "text-amber-700" : "text-slate-500"
+                              )}
+                              title="قطاع نظام المدرين المطابق — للعرض فقط"
+                            >
                               {roomsLoading
                                 ? "جاري جلب قطاعات المدرين..."
-                                : managersRooms.length
-                                  ? "غير مربوط — اختر قطاعًا"
-                                  : "لا توجد قطاعات عند المدرين"}
-                            </option>
-                            {managersRooms.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.title} ({r.id})
-                              </option>
-                            ))}
-                            {/* ربط قديم اختفى من قائمة التوكن — نظهره عشان الإلغاء يفضل متاح */}
-                            {s.managersRoomId != null &&
-                              !managersRooms.some((r) => r.id === s.managersRoomId) && (
-                                <option value={s.managersRoomId}>
-                                  {s.managersRoomTitle ?? `معرّف ${s.managersRoomId}`} (لم يعد مصرّح به)
-                                </option>
-                              )}
-                          </select>
-                          {linkingSectorId === s.id && <Loader2 size={14} className="animate-spin text-slate-400 shrink-0" />}
+                                : s.managersRoomId == null
+                                  ? "غير مربوط بقطاع المدرين"
+                                  : (s.managersRoomTitle ??
+                                    managersRooms.find((r) => r.id === s.managersRoomId)?.title ??
+                                    `معرّف ${s.managersRoomId}`)}
+                            </span>
+                          )}
                           <span
                             className="text-[11px] font-mono text-slate-400 shrink-0"
                             title="عدّاد المعدات من شيت الـ day (آخر يوم مسجل)"
@@ -649,28 +894,55 @@ export default function ProjectsPage() {
                             </button>
                           </>
                         ) : (
-                          <>
-                            <button
-                              onClick={() => setEditSector({ id: s.id, name: s.name })}
-                              title="تعديل"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-primary-700 hover:bg-primary-100 transition-colors"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button
-                              onClick={() => void removeSector(s)}
-                              disabled={!canManage}
-                              title={canManage ? "حذف" : "الحذف متاح لـ ROOT/ADMIN فقط"}
-                              className={cn(
-                                "p-1.5 rounded-lg transition-colors",
-                                canManage
-                                  ? "text-slate-400 hover:text-red-600 hover:bg-red-50"
-                                  : "text-slate-200 cursor-not-allowed"
-                              )}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
+                          canManage && (
+                            <>
+                              <button
+                                onClick={() => setEditSector({ id: s.id, name: s.name })}
+                                title="تعديل"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-primary-700 hover:bg-primary-100 transition-colors"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                onClick={() => void unlinkSector(s)}
+                                disabled={!canUnlink || unlinkingSectorId === s.id}
+                                title={
+                                  canUnlink
+                                    ? "فك الارتباط عن هذا المشروع فقط — القطاع وسجلاته هتفضل موجودة"
+                                    : "قطاع قديم مسجل بالعمود القديم فقط — لا يوجد صف ربط لفكه. استخدم الحذف النهائي أو أضف القطاع من جديد."
+                                }
+                                className={cn(
+                                  "p-1.5 rounded-lg transition-colors",
+                                  canUnlink && unlinkingSectorId !== s.id
+                                    ? "text-slate-400 hover:text-amber-700 hover:bg-amber-50"
+                                    : "text-slate-200 cursor-not-allowed"
+                                )}
+                              >
+                                {unlinkingSectorId === s.id ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Unlink2 size={14} />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => void removeSector(s)}
+                                disabled={deletingSectorId === s.id}
+                                title="حذف القطاع نهائيًا — متاح لـ ROOT/ADMIN فقط، والسيرفر بيرفض لو فيه أي ارتباط"
+                                className={cn(
+                                  "p-1.5 rounded-lg transition-colors",
+                                  deletingSectorId === s.id
+                                    ? "text-slate-200 cursor-wait"
+                                    : "text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                )}
+                              >
+                                {deletingSectorId === s.id ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Trash2 size={14} />
+                                )}
+                              </button>
+                            </>
+                          )
                         )}
                       </div>
                     </div>
@@ -680,7 +952,9 @@ export default function ProjectsPage() {
             </div>
 
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              حذف المشروع/القطاع متاح لما مفيش معدات مرتبطة بيهم.
+              {canManage
+                ? "«فك الارتباط» بيشيل القطاع من هذا المشروع فقط ويسيب القطاع وسجلاته التاريخية. «حذف القطاع نهائيًا» متاح لـ ROOT/ADMIN وبيتمنع لو فيه معدات أو سجلات تشغيلية/تاريخية مرتبطة."
+                : "عرض للقراءة فقط — إدارة القطاعات (الإضافة، التعديل، ربط قطاع المدرين، فك الارتباط، الحذف النهائي) متاحة لـ ROOT/ADMIN فقط."}
             </p>
           </div>
         </div>

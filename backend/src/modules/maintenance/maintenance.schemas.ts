@@ -33,6 +33,7 @@ export const createMaintenanceSchema = z.object({
   status: z.enum(["NEW", "IN_PROGRESS", "DONE", "WAITING_PARTS"]).default("NEW"),
   notes: optionalText,
   parts: z.array(partSchema).default([]),
+  clientRequestId: z.string().trim().min(1).max(120).optional(),
 });
 
 export const updateMaintenanceSchema = createMaintenanceSchema.partial();
@@ -46,6 +47,7 @@ export const listMaintenanceQuerySchema = z.object({
   endDateTo: dateStr.optional(),
   equipmentId: z.coerce.number().int().optional(),
   projectId: z.coerce.number().int().optional(),
+  sectorId: z.coerce.number().int().optional(),
   code: z.string().trim().optional(),
   name: z.string().trim().optional(),
   orderType: z.string().trim().optional(),

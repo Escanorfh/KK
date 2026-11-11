@@ -16,6 +16,7 @@ import oilConsumptionRoutes from "./modules/oil-consumptions/oilConsumption.rout
 import faultRoutes from "./modules/faults/fault.routes";
 import repairOrderRoutes from "./modules/repair-orders/repairOrder.routes";
 import needRequestRoutes from "./modules/need-requests/needRequest.routes";
+import reviewRoutes from "./modules/review/review.routes";
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import dataRoutes from "./modules/data/data.routes";
 import cronRoutes from "./modules/cron/cron.routes";
@@ -25,6 +26,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDbConnectionError } from "./utils/db";
+import { isKnownPrismaError, mapPrismaError } from "./utils/prismaError";
 import { isDesktopMode } from "./config/runtimeMode";
 
 const app = express();
@@ -102,6 +104,8 @@ function runtimeProbe() {
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   Sector: ["managersRoomId", "managersRoomTitle"],
   NeedRequest: ["sectorId"],
+  DailyLog: ["projectCode", "contextSource"],
+  Maintenance: ["clientRequestId", "contextSource"],
 };
 
 async function missingColumns(): Promise<string[]> {
@@ -114,7 +118,7 @@ async function missingColumns(): Promise<string[]> {
     }
   } else {
     const rows = (await prisma.$queryRawUnsafe(
-      "SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN ('Sector', 'NeedRequest')"
+      "SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN ('Sector', 'NeedRequest', 'DailyLog', 'Maintenance')"
     )) as { table_name: string; column_name: string }[];
     for (const row of rows) {
       if (!present.has(row.table_name)) present.set(row.table_name, new Set());
@@ -130,7 +134,7 @@ async function missingColumns(): Promise<string[]> {
   return missing;
 }
 
-const SCHEMA_MIGRATION_FILE = "backend/prisma/migrations-manual/2026-11-05-need-request-sector.sql";
+const SCHEMA_MIGRATION_FILE = "backend/prisma/migrations-manual/2026-11-13-review-hardening.sql";
 
 app.get("/api/health/db", async (_req, res) => {
   try {
@@ -187,6 +191,7 @@ app.use("/api/oil-consumptions", oilConsumptionRoutes);
 app.use("/api/faults", faultRoutes);
 app.use("/api/repair-orders", repairOrderRoutes);
 app.use("/api/need-requests", needRequestRoutes);
+app.use("/api/review", reviewRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/data", dataRoutes);
 app.use("/api/cron", cronRoutes);
@@ -202,37 +207,47 @@ app.use((req, res) => {
   });
 });
 
-app.use(
-  (err: Error & { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error(err);
+export function errorHandler(
+  err: Error & { status?: number; code?: string },
+  _req: express.Request,
+  res: express.Response,
+  _next: express.NextFunction
+) {
+  console.error(err);
 
-    if (isDbConnectionError(err)) {
-      return res.status(503).json({
-        message: "تعذّر الاتصال بقاعدة البيانات — أعد المحاولة بعد لحظات",
-      });
-    }
-
-    // P2022 = العمود أو الجدول اللي الكود بيطلبه مش موجود في القاعدة، أي بنية أقدم من الكود.
-    // «خطأ غير متوقع» ما بتقولش للمنفّذ يعمل إيه — اسم العمود وملف الترحيل بيقفلوا الشكوى.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2022") {
-      const meta = err.meta as { model?: string; modelName?: string; column?: string } | undefined;
-      const rawColumn = meta?.column ?? "";
-      const model = meta?.model ?? meta?.modelName ?? "";
-      // Prisma بيبعته أحيانًا «Sector.managersRoomId» وأحيانًا اسم العمود بس مع اسم الموديل
-      const column = rawColumn.includes(".") ? rawColumn : [model, rawColumn].filter(Boolean).join(".");
-      return res.status(500).json({
-        message: `بنية قاعدة البيانات أقدم من كود السيرفر${
-          column ? ` — العمود «${column}» غير موجود` : ""
-        }؛ نفّذ ملف الترحيل ${SCHEMA_MIGRATION_FILE}`,
-      });
-    }
-
-    if (err.status && err.status !== 500) {
-      return res.status(err.status).json({ message: err.message });
-    }
-
-    res.status(500).json({ message: "حدث خطأ غير متوقع في الخادم" });
+  if (isDbConnectionError(err)) {
+    return res.status(503).json({
+      message: "تعذّر الاتصال بقاعدة البيانات — أعد المحاولة بعد لحظات",
+    });
   }
-);
+
+  const prismaError = mapPrismaError(err);
+  if (prismaError) {
+    return res.status(prismaError.status).json({ message: prismaError.message });
+  }
+
+  // P2022 = العمود أو الجدول اللي الكود بيطلبه مش موجود في القاعدة، أي بنية أقدم من الكود.
+  // «خطأ غير متوقع» ما بتقولش للمنفّذ يعمل إيه — اسم العمود وملف الترحيل بيقفلوا الشكوى.
+  if (isKnownPrismaError(err) && err.code === "P2022") {
+    const meta = (err as { meta?: { model?: string; modelName?: string; column?: string } }).meta;
+    const rawColumn = meta?.column ?? "";
+    const model = meta?.model ?? meta?.modelName ?? "";
+    // Prisma بيبعته أحيانًا «Sector.managersRoomId» وأحيانًا اسم العمود بس مع اسم الموديل
+    const column = rawColumn.includes(".") ? rawColumn : [model, rawColumn].filter(Boolean).join(".");
+    return res.status(500).json({
+      message: `بنية قاعدة البيانات أقدم من كود السيرفر${
+        column ? ` — العمود «${column}» غير موجود` : ""
+      }؛ نفّذ ملف الترحيل ${SCHEMA_MIGRATION_FILE}`,
+    });
+  }
+
+  if (err.status && err.status !== 500) {
+    return res.status(err.status).json({ message: err.message });
+  }
+
+  res.status(500).json({ message: "حدث خطأ غير متوقع في الخادم" });
+}
+
+app.use(errorHandler);
 
 export default app;

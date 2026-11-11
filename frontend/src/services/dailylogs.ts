@@ -1,6 +1,6 @@
 import api, { isOfflineError } from "@/lib/api";
 import { queueWrite, type Queued } from "@/lib/offline/queue";
-import type { DailyLog, Paginated } from "@/types";
+import type { DailyLog, Paginated, ReviewRequest } from "@/types";
 
 export interface DailyLogPayload {
   id?: number;
@@ -14,14 +14,32 @@ export interface DailyLogPayload {
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;
+  clientRequestId?: string;
+  context?: {
+    projectId?: number | null;
+    projectCode?: string | null;
+    sectorId?: number | null;
+    projectName?: string | null;
+    sectorName?: string | null;
+    equipmentCode?: string | null;
+    equipmentName?: string | null;
+    contextSource?: "SNAPSHOT" | "UNKNOWN";
+    capturedAt?: string;
+    capturedOffline?: boolean;
+    attestation?: string | null;
+  };
 }
 
 export async function saveDailyLog(
   payload: DailyLogPayload
-): Promise<{ record: DailyLog; updated: boolean } | Queued> {
+): Promise<{ record: DailyLog; updated: boolean } | { pendingReview: true; review: ReviewRequest } | Queued> {
   try {
-    const { data } = await api.post<{ record: DailyLog; updated: boolean }>("/dailylogs", payload);
-    return data;
+    const { data } = await api.post<{ record: DailyLog; updated: boolean; pendingReview?: boolean; review?: ReviewRequest }>(
+      "/dailylogs",
+      payload,
+    );
+    if (data.pendingReview && data.review) return { pendingReview: true, review: data.review };
+    return data as { record: DailyLog; updated: boolean };
   } catch (err) {
     if (!isOfflineError(err)) throw err;
     await queueWrite({

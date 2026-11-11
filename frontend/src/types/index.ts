@@ -28,9 +28,28 @@ export interface Project {
   _count?: { equipment: number; sectors: number };
 }
 
+/**
+ * صف ربط قطاع بمشروع كما يرجّعه السيرفر داخل `projects`.
+ * - `id` بيكون `null` في صف التوافق الانتقالي للقطاع القديم (GET /sectors/:id/projects).
+ * - القائمة مقيّدة بنطاق المستخدم، فمش كل الروابط مكشوفة لكل المستخدمين.
+ * - وجود الروابط أو طولها مش مصدر حقيقة للعضوية؛ العضوية تُطلب من السيرفر.
+ */
+export interface ProjectSector {
+  id: number | null;
+  projectId: number;
+  active: boolean;
+  project?: { id: number; code?: string | null; name: string } | null;
+  /** يظهر فقط في صف التوافق الانتقالي (قطاع قديم بلا أي صفوف ربط) */
+  legacy?: boolean;
+}
+
 export interface Sector {
   id: number;
-  projectId: number;
+  /**
+   * العمود القديم — أصل تاريخي مش مصدر حقيقة للعضوية.
+   * السيرفر بيسمح بـ null للقطاعات المشتركة/القديمة.
+   */
+  projectId: number | null;
   name: string;
   /** معرّف قطاع نظام المدرين (room_id) — null يعني القطاع غير مربوط، فالإرسال يتمنع */
   managersRoomId?: number | null;
@@ -50,9 +69,10 @@ export interface Equipment {
   trackingModeOverridden: boolean;
   trackingModeConfirmed: boolean;
   category?: { id: number; name: string; defaultTrackingMode: TrackingMode } | null;
-  project?: { id: number; name: string } | null;
+  project?: { id: number; code?: string | null; name: string } | null;
   sector?: { id: number; name: string } | null;
   _count?: { dailyLogs: number; maintenance: number; faults: number };
+  attestation?: string | null;
 }
 
 export interface DailyLog {
@@ -67,17 +87,21 @@ export interface DailyLog {
   condition?: "GOOD" | "BROKEN" | "STOPPED" | null;
   conditionNote?: string | null;
   notes?: string | null;
+  projectCode?: string | null;
+  projectName?: string | null;
+  sectorName?: string | null;
+  equipmentCode?: string | null;
+  equipmentName?: string | null;
   equipment: {
     id: number;
     code: string;
     name: string;
     trackingMode: TrackingMode;
-    project?: { id: number; name: string } | null;
+    project?: { id: number; code?: string | null; name: string } | null;
     sector?: { id: number; name: string } | null;
   };
   user?: { id: number; name: string } | null;
 }
-
 export interface WorkPart {
   id?: number;
   name: string;
@@ -112,6 +136,11 @@ export interface Maintenance {
   downtime?: number | null;
   status: "NEW" | "IN_PROGRESS" | "DONE" | "WAITING_PARTS";
   notes?: string | null;
+  projectCode?: string | null;
+  projectName?: string | null;
+  sectorName?: string | null;
+  equipmentCode?: string | null;
+  equipmentName?: string | null;
   workParts?: WorkPart[];
   equipment: {
     id: number;
@@ -119,7 +148,7 @@ export interface Maintenance {
     name: string;
     trackingMode: TrackingMode;
     trackingModeConfirmed: boolean;
-    project?: { id: number; name: string } | null;
+    project?: { id: number; code?: string | null; name: string } | null;
     sector?: { id: number; name: string } | null;
   };
   user?: { id: number; name: string } | null;
@@ -139,9 +168,37 @@ export interface Fault {
     id: number;
     code: string;
     name: string;
-    project?: { id: number; name: string } | null;
+    project?: { id: number; code?: string | null; name: string } | null;
     sector?: { id: number; name: string } | null;
   };
+}
+
+export type ReviewStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+
+export interface ReviewRequest {
+  id: number;
+  entity: "dailylog" | "maintenance";
+  status: ReviewStatus;
+  clientRequestId?: string | null;
+  submittedById: number;
+  submittedBy?: { name: string } | null;
+  submittedAt: string;
+  reviewedById?: number | null;
+  reviewedBy?: { name: string } | null;
+  reviewedAt?: string | null;
+  rejectionReason?: string | null;
+  submittedData: Record<string, unknown>;
+  reviewedData?: Record<string, unknown> | null;
+  equipmentId?: number | null;
+  projectId?: number | null;
+  sectorId?: number | null;
+  projectName?: string | null;
+  sectorName?: string | null;
+  equipmentCode?: string | null;
+  equipmentName?: string | null;
+  contextSource?: string | null;
+  capturedAt?: string | null;
+  recordId?: number | null;
 }
 
 export interface Paginated<T> {

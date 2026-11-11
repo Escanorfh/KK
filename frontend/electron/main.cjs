@@ -172,11 +172,12 @@ async function startApplication() {
     show: false,
     backgroundColor: "#0f172a",
     title: "EFMS — متابعة المعدات والصيانة",
-    icon: path.join(DIST, "pwa-512x512.png"),
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -220,8 +221,6 @@ async function startApplication() {
   }
 
   // [DIAGNOSTIC] فتح DevTools لرؤية أخطاء الـ renderer — يجب إزالته قبل الإصدار النهائي
-  mainWindow.webContents.openDevTools({ mode: "detach" });
-
   mainWindow.on("closed", () => {
     mainWindow = null;
   });

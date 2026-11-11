@@ -46,7 +46,8 @@ import {
   getPartAlerts,
   type EquipmentAlert,
 } from "@/services/partSchedules";
-import { projectOptions } from "@/services/projects";
+import { projectOptions, listSectors } from "@/services/projects";
+import type { SectorRow } from "@/services/projects";
 import type { Maintenance, Project, TrackingMode } from "@/types";
 
 const inputCls =
@@ -112,6 +113,10 @@ interface FormState {
   equipmentId: number | null;
   code: string;
   equipmentName: string;
+  projectId: number | null;
+  projectCode: string | null;
+  sectorId: number | null;
+  attestation: string | null;
   projectName: string;
   sectorName: string;
   trackingMode: TrackingMode;
@@ -134,6 +139,10 @@ const emptyForm: FormState = {
   equipmentId: null,
   code: "",
   equipmentName: "",
+  projectId: null,
+  projectCode: null,
+  sectorId: null,
+  attestation: null,
   projectName: "",
   sectorName: "",
   trackingMode: "BOTH",
@@ -169,14 +178,41 @@ export default function WorkPage() {
   const [schedSavingId, setSchedSavingId] = useState<number | null>(null);
   const [meterLoading, setMeterLoading] = useState(false);
   const [equipAlert, setEquipAlert] = useState<EquipmentAlert | null>(null);
-  const [projects, setProjects] = useState<Pick<Project, "id" | "name">[]>([]);
+  const [projects, setProjects] = useState<Pick<Project, "id" | "code" | "name">[]>([]);
   const [projectFilter, setProjectFilter] = useState("");
+  const [sectorFilter, setSectorFilter] = useState("");
+  const [sectors, setSectors] = useState<SectorRow[]>([]);
 
   useEffect(() => {
     projectOptions()
       .then(setProjects)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const pid = projectFilter ? Number(projectFilter) : undefined;
+    listSectors(pid)
+      .then((s) => {
+        setSectors(s);
+        if (sectorFilter && !s.some((x) => String(x.id) === sectorFilter)) {
+          setSectorFilter("");
+        }
+      })
+      .catch(() => setSectors([]));
+  }, [projectFilter]);
+
+  useEffect(() => {
+    if (!form.equipmentId || form.projectName) return;
+    if (!form.projectId) return;
+    const resolved = projects.find((p) => p.id === form.projectId);
+    if (resolved) {
+      setForm((f) => ({
+        ...f,
+        projectCode: f.projectCode ?? resolved.code ?? null,
+        projectName: resolved.name,
+      }));
+    }
+  }, [projects]);
 
   const reloadSchedules = useCallback(async (equipmentId: number) => {
     setSchedLoading(true);
@@ -238,6 +274,7 @@ export default function WorkPage() {
         date,
         pageSize: 100,
         ...(projectFilter ? { projectId: Number(projectFilter) } : {}),
+        ...(sectorFilter ? { sectorId: Number(sectorFilter) } : {}),
       });
       setRecords(res.data);
     } catch (err) {
@@ -245,7 +282,7 @@ export default function WorkPage() {
     } finally {
       setRecordsLoading(false);
     }
-  }, [date, projectFilter]);
+  }, [date, projectFilter, sectorFilter]);
 
   useEffect(() => {
     loadRecords();
@@ -311,12 +348,18 @@ export default function WorkPage() {
   }, [form.code]);
 
   const selectEquipment = (eq: (typeof suggestions)[number]) => {
+    const resolvedProject =
+      eq.project ?? projects.find((p) => p.id === (eq.projectId ?? eq.project?.id ?? null)) ?? null;
     setForm((f) => ({
       ...f,
       equipmentId: eq.id,
       code: eq.code,
       equipmentName: eq.name,
-      projectName: eq.project?.name || "",
+      projectId: eq.projectId ?? resolvedProject?.id ?? null,
+      projectCode: eq.project?.code ?? resolvedProject?.code ?? null,
+      sectorId: eq.sectorId ?? eq.sector?.id ?? null,
+      attestation: eq.attestation ?? f.attestation ?? null,
+      projectName: eq.project?.name || resolvedProject?.name || "",
       sectorName: eq.sector?.name || "",
       trackingMode: eq.trackingMode,
       meterReading: trackingModeAppliesHours(eq.trackingMode) ? f.meterReading : "",
@@ -435,6 +478,10 @@ export default function WorkPage() {
       equipmentId: rec.equipmentId,
       code: rec.equipment.code,
       equipmentName: rec.equipment.name,
+      projectId: rec.equipment.project?.id ?? null,
+      projectCode: rec.equipment.project?.code ?? null,
+      sectorId: rec.equipment.sector?.id ?? null,
+      attestation: null,
       projectName: rec.equipment.project?.name || "",
       sectorName: rec.equipment.sector?.name || "",
       trackingMode: rec.equipment.trackingMode,
@@ -481,6 +528,19 @@ export default function WorkPage() {
         date,
         endDate: form.endDate || null,
         equipmentId: form.equipmentId,
+        clientRequestId: crypto.randomUUID(),
+        context: {
+          projectId: form.projectId,
+          projectCode: form.projectCode,
+          sectorId: form.sectorId,
+          projectName: form.projectName || null,
+          sectorName: form.sectorName || null,
+          equipmentCode: form.code,
+          equipmentName: form.equipmentName,
+          contextSource: (form.projectId != null || form.sectorId != null ? "SNAPSHOT" : "UNKNOWN") as "SNAPSHOT" | "UNKNOWN",
+          capturedAt: new Date().toISOString(),
+          attestation: form.attestation,
+        },
         workType: (form.maintenanceType || "").includes("طارئ") ? "REPAIR" as const : "MAINTENANCE" as const,
         orderType: form.orderType || null,
         maintenanceType: form.maintenanceType || null,
@@ -514,10 +574,13 @@ export default function WorkPage() {
         const rec = await createMaintenance(payload);
         if (isQueued(rec)) {
           toast("تم حفظ أمر الشغل على الجهاز — سيُرسل للسيرفر تلقائيًا عند عودة الاتصال", { icon: "📴" });
+        } else if (rec && typeof rec === "object" && "pendingReview" in rec && rec.pendingReview) {
+          toast("تم إرسال أمر الشغل للمراجعة — بانتظار اعتماد ROOT/ADMIN", { icon: "⏳" });
         } else {
+          const r = rec as Maintenance;
           toast.success(
-            rec.workOrderNo != null
-              ? `تم حفظ أمر الشغل رقم ${rec.workOrderNo}`
+            r.workOrderNo != null
+              ? `تم حفظ أمر الشغل رقم ${r.workOrderNo}`
               : "تم حفظ أمر الشغل"
           );
         }
@@ -585,6 +648,25 @@ export default function WorkPage() {
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+            <FolderKanban size={14} className="text-slate-400" />
+            <label className="text-xs text-slate-500" htmlFor="work-sector-filter">
+              القطاع
+            </label>
+            <select
+              id="work-sector-filter"
+              value={sectorFilter}
+              onChange={(e) => setSectorFilter(e.target.value)}
+              className="text-xs bg-transparent focus:outline-none max-w-[170px]"
+            >
+              <option value="">كل القطاعات</option>
+              {sectors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
                 </option>
               ))}
             </select>

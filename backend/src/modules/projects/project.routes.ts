@@ -10,6 +10,7 @@ router.use(requireAuth);
 
 router.get("/", validateQuery(listProjectsQuerySchema), projectController.list);
 router.get("/options", projectController.options);
+router.get("/:projectId/sectors", projectController.listSectors);
 router.post("/", validate(createProjectSchema), projectController.create);
 router.put("/:id", validate(updateProjectSchema), projectController.update);
 router.delete("/:id", requireRole("ROOT", "ADMIN"), projectController.remove);

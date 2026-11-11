@@ -110,6 +110,29 @@ export async function kvGet<T = unknown>(key: string): Promise<CachedResponse<T>
   return run<CachedResponse<T> | undefined>(KV, "readonly", (s) => s.get(key));
 }
 
+/**
+ * يمسح مفاتيح كاش القراءة اللي بتبدأ ببادئة معينة فقط.
+ * لا يلمس الـ outbox أو أي بيانات مستخدم أخرى — للاستخدام بعد تغييرات الربط.
+ */
+export function kvDeleteByPrefix(prefix: string): Promise<void> {
+  return openDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(KV, "readwrite");
+        const store = tx.objectStore(KV);
+        const req = store.openKeyCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return;
+          if (String(cursor.key).startsWith(prefix)) store.delete(cursor.key);
+          cursor.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
 export async function kvLatestAt(): Promise<number | null> {
   const all = await run<CachedResponse[]>(KV, "readonly", (s) => s.getAll() as IDBRequest<CachedResponse[]>);
   return all.reduce((max, row) => Math.max(max, row.at), 0) || null;

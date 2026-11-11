@@ -38,7 +38,25 @@ export async function list({ q, page, pageSize, scope }: ListParams) {
 
   // العدّاد الرسمي للمعدات بيتحسب من شيت الـ day (آخر يوم) لأن المعدات بتتنقل بين المشاريع،
   // ولو مفيش أي سجل يومي خالص نرجع لعدّ الإسناد الحالي عشان الصفحة ما تبانش فاضية بالكامل
-  const data = rows.map((p) => ({
+  //
+  // عدد القطاعات = روابط ProjectSector النشطة + القطاعات القديمة اللي ملهاش أي صف ربط.
+  // القطاع المشترك بين مشروعين بيتعدّ مرة واحدة في كل مشروع، والربط الملغي ما بيتعدّش.
+  const withSectorCounts = await Promise.all(
+    rows.map(async (row) => {
+      const [activeLinks, legacyOnly] = await Promise.all([
+        prisma.projectSector.count({ where: { projectId: row.id, active: true } }),
+        prisma.sector.count({
+          where: { projectId: row.id, projectSectors: { none: {} } },
+        }),
+      ]);
+      return {
+        ...row,
+        _count: { ...row._count, sectors: activeLinks + legacyOnly },
+      };
+    })
+  );
+
+  const data = withSectorCounts.map((p) => ({
     ...p,
     activeEquipment: lastDay.lastLogDate ? (lastDay.byProject.get(p.id) ?? 0) : p._count.equipment,
   }));

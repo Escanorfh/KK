@@ -147,8 +147,19 @@ export async function queueWrite(input: QueueInput): Promise<void> {
       throw new Error("تعذّر حفظ العملية محليًا — جلسة العمل قيد الإغلاق أو تسجيل الخروج");
     }
 
+    // تمييز اللقطة الملتقطة دون اتصال: عند التخزين في Outbox نضع capturedOffline=true
+    // ليتميّز الإرسال المؤجّل عن الإرسال (online) (B.2.4.3.3).
+    let offlineData = input.data;
+    if (offlineData && typeof offlineData === "object" && !Array.isArray(offlineData)) {
+      const ctx = (offlineData as { context?: Record<string, unknown> }).context;
+      if (ctx && typeof ctx === "object") {
+        offlineData = { ...(offlineData as Record<string, unknown>), context: { ...ctx, capturedOffline: true } };
+      }
+    }
+
     await addOutbox({
       ...input,
+      data: offlineData,
       userId: resolvedUserId,
       createdAt: Date.now(),
       attempts: 0,

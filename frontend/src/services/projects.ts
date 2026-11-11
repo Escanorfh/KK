@@ -1,10 +1,44 @@
 import api from "@/lib/api";
-import type { Paginated, Project, Sector } from "@/types";
+import type { Paginated, Project, ProjectSector, Sector } from "@/types";
 
 export type SectorRow = Sector & {
   _count?: { equipment: number };
-  project?: { id: number; name: string };
+  /** المشروع القديم (أصل تاريخي) — ممكن يكون null أو غائب */
+  project?: { id: number; name: string; code?: string | null } | null;
+  /**
+   * روابط المشاريع النشطة المرئية للمستخدم.
+   * اختيارية لأن الكاش القديم ممكن يكون محفوظ قبل إضافة الحقل، وبعض الردود مش بترجّعه.
+   * لا تُستنتج العضوية من طول القائمة.
+   */
+  projects?: ProjectSector[];
 };
+
+/** إنشاء قطاع: لازم يتحدد مشروع واحد على الأقل (projectId أو projectIds) — السيرفر يتحقق كذلك */
+export type CreateSectorPayload =
+  | { name: string; projectId: number; projectIds?: number[] }
+  | { name: string; projectIds: number[]; projectId?: number };
+
+/** نتيجة POST /sectors/:id/projects (صف الربط + مراجع مختصرة) */
+export interface AssociateSectorProjectResult {
+  id: number;
+  projectId: number;
+  sectorId: number;
+  normalizedName: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  sector: { id: number; name: string };
+  project: { id: number; name: string };
+}
+
+/** نتيجة DELETE /sectors/:id/projects/:projectId — إلغاء ربط (soft) مش حذف قطاع */
+export interface RemoveSectorProjectResult {
+  message: string;
+  sectorId: number;
+  projectId: number;
+  associationId: number;
+  active: false;
+}
 
 export type ProjectPayload = {
   code?: string | null;
@@ -56,8 +90,8 @@ export async function listSectors(projectId?: number) {
   return data;
 }
 
-export async function createSector(payload: { projectId: number; name: string }) {
-  const { data } = await api.post<Sector>("/sectors", payload);
+export async function createSector(payload: CreateSectorPayload) {
+  const { data } = await api.post<Sector & { projects: ProjectSector[] }>("/sectors", payload);
   return data;
 }
 
@@ -68,6 +102,31 @@ export async function updateSector(id: number, name: string) {
 
 export async function deleteSector(id: number) {
   const { data } = await api.delete<{ message: string }>(`/sectors/${id}`);
+  return data;
+}
+
+/**
+ * روابط القطاع بالمشاريع (نشطة، وفي نطاق المستخدم).
+ * صف التوافق الانتقالي للقطاع القديم بيرجع `{ id: null, legacy: true }`.
+ */
+export async function listSectorProjects(sectorId: number) {
+  const { data } = await api.get<ProjectSector[]>(`/sectors/${sectorId}/projects`);
+  return data;
+}
+
+/** ربط قطاع موجود بمشروع (online-only — من غير offline queue) */
+export async function associateSectorProject(sectorId: number, projectId: number) {
+  const { data } = await api.post<AssociateSectorProjectResult>(`/sectors/${sectorId}/projects`, {
+    projectId,
+  });
+  return data;
+}
+
+/** إلغاء ربط القطاع بمشروع واحد — القطاع وسجلاته التاريخية ما بتتلمسش */
+export async function removeSectorProject(sectorId: number, projectId: number) {
+  const { data } = await api.delete<RemoveSectorProjectResult>(
+    `/sectors/${sectorId}/projects/${projectId}`
+  );
   return data;
 }
 

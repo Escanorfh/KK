@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import * as projectService from "./project.service";
+import * as sectorService from "../sectors/sector.service";
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -44,6 +45,18 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     const result = await projectService.remove(Number(req.params.id), req.user!.id);
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listSectors(req: Request, res: Response, next: NextFunction) {
+  try {
+    const projectId = Number(req.params.projectId);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ message: "معرّف المشروع غير صالح" });
+    }
+    res.json(await sectorService.listProjectSectors(projectId, req.scope));
   } catch (err) {
     next(err);
   }

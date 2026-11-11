@@ -1,6 +1,6 @@
 import api, { isOfflineError } from "@/lib/api";
 import { queueWrite, type Queued } from "@/lib/offline/queue";
-import type { Maintenance, Paginated, WorkPart } from "@/types";
+import type { Maintenance, Paginated, ReviewRequest, WorkPart } from "@/types";
 
 export interface MaintenancePayload {
   id?: number;
@@ -19,14 +19,32 @@ export interface MaintenancePayload {
   status?: "NEW" | "IN_PROGRESS" | "DONE" | "WAITING_PARTS";
   notes?: string | null;
   parts?: WorkPart[];
+  clientRequestId?: string;
+  context?: {
+    projectId?: number | null;
+    projectCode?: string | null;
+    sectorId?: number | null;
+    projectName?: string | null;
+    sectorName?: string | null;
+    equipmentCode?: string | null;
+    equipmentName?: string | null;
+    contextSource?: "SNAPSHOT" | "UNKNOWN";
+    capturedAt?: string;
+    capturedOffline?: boolean;
+    attestation?: string | null;
+  };
 }
 
 export async function createMaintenance(
   payload: MaintenancePayload
-): Promise<Maintenance | Queued> {
+): Promise<Maintenance | { pendingReview: true; review: ReviewRequest } | Queued> {
   try {
-    const { data } = await api.post<{ record: Maintenance }>("/maintenance", payload);
-    return data.record;
+    const { data } = await api.post<{ record: Maintenance; pendingReview?: boolean; review?: ReviewRequest }>(
+      "/maintenance",
+      payload,
+    );
+    if (data.pendingReview && data.review) return { pendingReview: true, review: data.review };
+    return data.record as Maintenance;
   } catch (err) {
     if (!isOfflineError(err)) throw err;
     await queueWrite({
