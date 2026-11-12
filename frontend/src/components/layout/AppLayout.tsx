@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   LogOut,
   Download,
+  ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConnectionStatus from "@/components/ConnectionStatus";
@@ -67,6 +68,7 @@ const sections: { title: string; links: NavLink[] }[] = [
       { to: "/review", label: "مراجعة البيانات", icon: ClipboardCheck, roles: ["ROOT", "ADMIN"] },
       { to: "/users", label: "المستخدمين", icon: Users, roles: ["ROOT", "ADMIN"] },
       { to: "/data-management", label: "إدارة البيانات", icon: Database, roles: ["ROOT"] },
+      { to: "/equipment-transfers", label: "نقل المعدات", icon: ArrowRightLeft, roles: ["ROOT"] },
     ],
   },
 ];

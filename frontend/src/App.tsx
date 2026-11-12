@@ -9,6 +9,7 @@ import FaultsPage from "./pages/faults/FaultsPage";
 import OilAlertsPage from "./pages/oil-alerts/OilAlertsPage";
 import OilConsumptionsPage from "./pages/oil-consumptions/OilConsumptionsPage";
 import EquipmentPage from "./pages/equipment/EquipmentPage";
+import EquipmentTransfersPage from "./pages/equipment-transfers/EquipmentTransfersPage";
 import TrackingModesPage from "./pages/tracking-modes/TrackingModesPage";
 import RepairOrdersPage from "./pages/repair-orders/RepairOrdersPage";
 import NeedRequestsPage from "./pages/need-requests/NeedRequestsPage";
@@ -77,6 +78,14 @@ export default function App() {
           element={
             <RequireAuth roles={["ROOT"]}>
               <DataManagementPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/equipment-transfers"
+          element={
+            <RequireAuth roles={["ROOT"]}>
+              <EquipmentTransfersPage />
             </RequireAuth>
           }
         />
