@@ -9,6 +9,7 @@ import userRoutes from "./modules/users/user.routes";
 import projectRoutes from "./modules/projects/project.routes";
 import sectorRoutes from "./modules/sectors/sector.routes";
 import equipmentRoutes from "./modules/equipments/equipment.routes";
+import transferRoutes from "./modules/equipment-transfers/transfer.routes";
 import dailylogRoutes from "./modules/dailylogs/dailylog.routes";
 import maintenanceRoutes from "./modules/maintenance/maintenance.routes";
 import partScheduleRoutes from "./modules/part-schedules/partSchedule.routes";

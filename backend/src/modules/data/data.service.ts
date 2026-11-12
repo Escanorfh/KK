@@ -1245,6 +1245,7 @@ export async function clearAll() {
     prisma.projectSector.deleteMany(),
     prisma.userProject.deleteMany(),
     prisma.equipmentAssignment.deleteMany(),
+    prisma.equipmentTransferRequest.deleteMany(),
     prisma.equipment.deleteMany(),
     prisma.sector.deleteMany(),
     prisma.project.deleteMany(),
