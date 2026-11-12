@@ -11,12 +11,19 @@ export default function ReloadPrompt() {
     updateServiceWorker,
   } = useRegisterSW({
     onRegistered(r) {
-      // Periodic check for SW update (every 60 minutes)
-      if (r) {
-        setInterval(() => {
-          void r.update();
-        }, 60 * 60 * 1000);
-      }
+      if (!r) return;
+      // Check for a new deployment immediately on load.
+      void r.update();
+      // Re-check periodically (every 15 minutes) and when the tab regains focus.
+      setInterval(() => {
+        void r.update();
+      }, 15 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") void r.update();
+      });
+      window.addEventListener("focus", () => {
+        void r.update();
+      });
     },
     onRegisterError(error) {
       console.error("SW registration error:", error);
