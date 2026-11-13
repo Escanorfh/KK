@@ -102,7 +102,6 @@ export default function TransfersPage() {
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white">
           <option value="">كل الحالات</option>
           <option value="PENDING">قيد المراجعة</option>
-          <option value="APPROVED">معتمد</option>
           <option value="COMPLETED">مكتمل</option>
           <option value="REJECTED">مرفوض</option>
           <option value="CANCELLED">ملغى</option>
@@ -119,7 +118,7 @@ export default function TransfersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  {["#", "كود المعدة", "اسم المعدة", "من مشروع", "من قطاع", "إلى مشروع", "إلى قطاع", "التاريخ", "مقدم الطلب", "الحالة", "إجراءات"].map((h) => (
+                  {["#", "كود المعدة", "اسم المعدة", "من مشروع", "من قطاع", "إلى مشروع", "إلى قطاع", "تاريخ الطلب", "وقت التنفيذ", "مقدم الطلب", "الحالة", "إجراءات"].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-right text-xs font-bold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -135,6 +134,7 @@ export default function TransfersPage() {
                     <td className="px-3 py-2.5">{t.toProject?.name ?? "—"}</td>
                     <td className="px-3 py-2.5">{t.toSector?.name ?? "—"}</td>
                     <td className="px-3 py-2.5">{t.transferDate?.slice(0, 10)}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">{t.status === "COMPLETED" && t.reviewedAt ? t.reviewedAt.slice(0, 16).replace("T", " ") : "—"}</td>
                     <td className="px-3 py-2.5">{t.submittedBy?.name}</td>
                     <td className="px-3 py-2.5">
                       <span className={cn("inline-block px-2 py-0.5 rounded border text-xs font-semibold", STATUS_CLS[t.status])}>
@@ -160,7 +160,7 @@ export default function TransfersPage() {
       {showCreate && (
         <CreateTransferModal
           onClose={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); void load(); toast.success("تم إنشاء طلب النقل"); }}
+          onCreated={() => { setShowCreate(false); void load(); toast.success("تم إنشاء طلب النقل — بانتظار مراجعة ROOT"); }}
         />
       )}
 
@@ -168,7 +168,7 @@ export default function TransfersPage() {
         <ApproveTransferModal
           transfer={approving}
           onClose={() => setApproving(null)}
-          onApproved={() => { setApproving(null); void load(); toast.success("تم اعتماد النقل"); }}
+          onApproved={() => { setApproving(null); void load(); toast.success("تم نقل المعدة بنجاح."); }}
         />
       )}
     </div>
@@ -270,7 +270,6 @@ function ApproveTransferModal({ transfer, onClose, onApproved }: { transfer: Tra
   const [sectors, setSectors] = useState<any[]>([]);
   const [toProjectId, setToProjectId] = useState("");
   const [toSectorId, setToSectorId] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(transfer.transferDate?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -287,9 +286,12 @@ function ApproveTransferModal({ transfer, onClose, onApproved }: { transfer: Tra
       toast.error("اختر المشروع المستهدف");
       return;
     }
+    if (!window.confirm("سيتم نقل المعدة فورًا إلى المشروع والقطاع المحددين. هل تريد المتابعة؟")) {
+      return;
+    }
     setSaving(true);
     try {
-      await approveTransfer(transfer.id, { toProjectId: Number(toProjectId), toSectorId: toSectorId ? Number(toSectorId) : null, effectiveDate });
+      await approveTransfer(transfer.id, { toProjectId: Number(toProjectId), toSectorId: toSectorId ? Number(toSectorId) : null });
       onApproved();
     } catch (err) {
       toast.error(getApiError(err));
@@ -323,15 +325,14 @@ function ApproveTransferModal({ transfer, onClose, onApproved }: { transfer: Tra
             {sectors.map((s: any) => (<option key={s.id} value={s.id}>{s.name}</option>))}
           </select>
         </div>
-        <div>
-          <label className="block text-[13px] font-semibold text-slate-600 mb-1.5">تاريخ سريان النقل</label>
-          <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className={inputCls} />
-        </div>
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          سيتم نقل المعدة فورًا إلى المشروع والقطاع المحددين. لا يوجد انتظار أو تاريخ سريان مستقبلي.
+        </p>
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold" disabled={saving}>إغلاق</button>
           <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold">
             {saving ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-            اعتماد
+            اعتماد ونقل فوري
           </button>
         </div>
       </div>

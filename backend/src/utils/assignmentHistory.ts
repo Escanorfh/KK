@@ -21,6 +21,8 @@ export const ASSIGNMENT_SOURCES = {
   MANAGERS_SYNC: "MANAGERS_SYNC",
   /** Project/sector changed by an explicit edit inside EFMS. */
   EFMS_MANUAL: "EFMS_MANUAL",
+  /** Project/sector changed by an approved EFMS equipment transfer. */
+  EFMS_TRANSFER: "EFMS_TRANSFER",
   /** Project/sector changed during a spreadsheet import. */
   IMPORT: "IMPORT",
   /** Row backfilled from a trusted external history source (never auto-run). */

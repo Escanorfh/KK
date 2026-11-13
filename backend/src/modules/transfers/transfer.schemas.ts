@@ -12,7 +12,6 @@ export const createTransferSchema = z.object({
 export const approveTransferSchema = z.object({
   toProjectId: z.coerce.number().int().positive("اختر المشروع المستهدف"),
   toSectorId: z.coerce.number().int().positive().nullable().optional(),
-  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "تاريخ غير صحيح").optional(),
 });
 
 export const listTransferQuerySchema = z.object({

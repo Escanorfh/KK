@@ -62,8 +62,10 @@ export async function create(data: { equipmentId: number; transferDate: string; 
         fromSectorId: equipment.sectorId,
         toProjectId: null,
         toSectorId: null,
+        // transferDate is the archival request date only; it never delays execution.
         transferDate: new Date(data.transferDate),
-        effectiveDate: new Date(data.transferDate),
+        // effectiveDate is set server-side at execution time (approval) — never by the client.
+        effectiveDate: null,
         reason: data.reason ?? null,
         notes: data.notes ?? null,
         submittedById: userId,
@@ -82,62 +84,116 @@ export async function create(data: { equipmentId: number; transferDate: string; 
   }
 }
 
-export async function approve(id: number, userId: number, data: { toProjectId: number; toSectorId?: number | null; effectiveDate?: string }) {
-  return prisma.$transaction(async (tx) => {
+/**
+ * ROOT approves → the transfer executes IMMEDIATELY.
+ *
+ * One atomic transaction: lock Equipment row → re-read → validate source,
+ * destination project, destination ProjectSector link, and no conflicting
+ * pending request → mark the request COMPLETED (claiming it atomically) →
+ * update Equipment.projectId/sectorId → commit. Any failure rolls the whole
+ * transaction back: Equipment is never updated without a recorded transfer,
+ * and a transfer is never completed without updating Equipment.
+ *
+ * `effectiveDate` is set to the server-side execution date so the historical
+ * resolver (`resolveEquipmentAssignmentAtDate`) places the transfer at the
+ * moment it actually happened. It no longer schedules anything.
+ */
+export async function approve(id: number, userId: number, data: { toProjectId: number; toSectorId?: number | null }) {
+  const executedAt = new Date(); // server-side execution timestamp
+
+  const record = await prisma.$transaction(async (tx) => {
     const existing = await tx.equipmentTransfer.findUnique({ where: { id } });
     if (!existing) fail("عملية النقل غير موجودة", 404);
     if (existing.status !== "PENDING") fail("العملية ليست في حالة مراجعة", 409);
 
-    // Shared row-level lock (same as completeDue) to serialize with Cron.
+    // 1. Equipment row lock — serializes concurrent approvals on the same equipment.
     await tx.$queryRaw`SELECT id FROM core."Equipment" WHERE id = ${existing.equipmentId} FOR UPDATE`;
 
-    // Re-read equipment after lock.
+    // 2. Re-read the equipment after acquiring the lock.
     const equipment = await tx.equipment.findUnique({ where: { id: existing.equipmentId } });
     if (!equipment) fail("المعدة غير موجودة", 404);
+
+    // 3. The equipment must still be in the source project/sector recorded on the request.
     if (equipment.projectId !== existing.fromProjectId || equipment.sectorId !== existing.fromSectorId) {
       fail("تعارض: تغير تخصيص المعدة منذ تقديم الطلب. يرجى مراجعة ROOT.", 409);
     }
 
-    // Chain validation: the expected assignment immediately before this transfer's effective date
-    // must match the request's source (fromProjectId/fromSectorId).
-    const effDate = data.effectiveDate ? new Date(data.effectiveDate) : existing.transferDate;
-    const prior = await resolveEquipmentAssignmentAtDate(existing.equipmentId, new Date(effDate.getTime() - 86400000));
-    if (prior.projectId !== existing.fromProjectId || prior.sectorId !== existing.fromSectorId) {
-      fail("تعارض: التخصيص المتوقع قبل تاريخ السريان لا يطابق مصدر الطلب.", 409);
-    }
-
-    // Conflict check: no other approved transfer with overlapping effective date for same equipment
-    const conflicting = await tx.equipmentTransfer.findFirst({
-      where: {
-        equipmentId: existing.equipmentId,
-        id: { not: id },
-        status: { in: ["APPROVED", "COMPLETED"] },
-        effectiveDate: effDate,
-      },
-    });
-    if (conflicting) fail("يوجد طلب نقل معتمد آخر بنفس تاريخ السريان", 409);
-
+    // 4. Destination project must exist.
     const toProject = await tx.project.findUnique({ where: { id: data.toProjectId } });
     if (!toProject) fail("المشروع المستهدف غير موجود", 404);
 
-    // Atomic claim
+    // 5. Destination sector must exist and be linked to the destination project
+    //    through an ACTIVE ProjectSector. Never create/reactivate associations here.
+    if (data.toSectorId != null) {
+      const toSector = await tx.sector.findUnique({ where: { id: data.toSectorId } });
+      if (!toSector) fail("القطاع المستهدف غير موجود", 404);
+      const link = await tx.projectSector.findFirst({
+        where: { projectId: data.toProjectId, sectorId: data.toSectorId, active: true },
+        select: { id: true },
+      });
+      if (!link) fail("القطاع المستهدف غير مرتبط بالمشروع المستهدف", 409);
+    }
+
+    // 6. No other pending request for the same equipment (belt-and-braces on top
+    //    of the partial unique index; two conflicting approvals cannot both pass).
+    const otherPending = await tx.equipmentTransfer.findFirst({
+      where: { equipmentId: existing.equipmentId, status: "PENDING", id: { not: id } },
+      select: { id: true },
+    });
+    if (otherPending) fail("يوجد طلب نقل معلق آخر لنفس المعدة", 409);
+
+    // 7+9. Atomic claim: only a PENDING request can be completed — a second
+    //      concurrent approval fails here with count === 0.
     const claim = await tx.equipmentTransfer.updateMany({
       where: { id, status: "PENDING" },
       data: {
-        status: "APPROVED",
+        status: "COMPLETED",
         toProjectId: data.toProjectId,
         toSectorId: data.toSectorId ?? null,
-        effectiveDate: effDate,
+        // Execution date (server time) — drives the historical resolver only.
+        effectiveDate: executedAt,
         reviewedById: userId,
-        reviewedAt: new Date(),
+        reviewedAt: executedAt,
       },
     });
     if (claim.count === 0) fail("تمت مراجعة الطلب بالفعل", 409);
 
-    const updated = await tx.equipmentTransfer.findUnique({ where: { id }, include });
-    await logAudit(userId, "EquipmentTransfer", id, "UPDATE", { action: "APPROVE", toProjectId: data.toProjectId });
-    return updated!;
+    // 8. Move the equipment NOW — same transaction, same lock.
+    await tx.equipment.update({
+      where: { id: existing.equipmentId },
+      data: { projectId: data.toProjectId, sectorId: data.toSectorId ?? null },
+    });
+
+    return tx.equipmentTransfer.findUnique({ where: { id }, include });
   });
+
+  // Assignment-history compatibility (post-commit, best-effort): an executed
+  // transfer is an EFMS-observed assignment change at execution time. This
+  // closes the previous open interval and opens a new one — idempotent, never
+  // backdated. Uses the safe wrapper so an unmigrated history table cannot
+  // break an already-committed transfer.
+  try {
+    const { recordAssignmentSafe, activeProjectSectorId, ASSIGNMENT_SOURCES } = await import("../../utils/assignmentHistory.js");
+    await recordAssignmentSafe({
+      equipmentId: record!.equipmentId,
+      projectId: data.toProjectId,
+      sectorId: data.toSectorId ?? null,
+      projectSectorId: await activeProjectSectorId(data.toProjectId, data.toSectorId ?? null),
+      sourceSystem: ASSIGNMENT_SOURCES.EFMS_TRANSFER,
+      sourceReference: `transfer:${id}`,
+      at: executedAt,
+    });
+  } catch {
+    // history recording must never fail the transfer itself
+  }
+
+  await logAudit(userId, "EquipmentTransfer", id, "UPDATE", {
+    action: "TRANSFER_EXECUTED",
+    toProjectId: data.toProjectId,
+    toSectorId: data.toSectorId ?? null,
+    equipmentId: record!.equipmentId,
+  });
+  return record!;
 }
 
 export async function reject(id: number, userId: number, reason: string) {
@@ -231,59 +287,4 @@ export async function resolveEquipmentAssignmentAtDate(equipmentId: number, reco
   });
 
   return selectTransferAssignmentAtDate(transfers, equipment, recordDate);
-}
-
-export async function completeDue() {
-  const due = await prisma.equipmentTransfer.findMany({
-    where: { status: "APPROVED", effectiveDate: { lte: new Date() } },
-    orderBy: [{ effectiveDate: "asc" }, { id: "asc" }],
-  });
-
-  // Group by equipment for per-equipment serialization
-  const byEquipment = new Map<number, typeof due>();
-  for (const t of due) {
-    if (!byEquipment.has(t.equipmentId)) byEquipment.set(t.equipmentId, []);
-    byEquipment.get(t.equipmentId)!.push(t);
-  }
-
-  let completed = 0;
-  for (const [equipmentId, transfers] of byEquipment) {
-    // Sort chronologically within equipment
-    transfers.sort((a, b) => {
-      const da = a.effectiveDate?.getTime() ?? 0;
-      const db = b.effectiveDate?.getTime() ?? 0;
-      if (da !== db) return da - db;
-      return a.id - b.id;
-    });
-
-    try {
-      await prisma.$transaction(async (tx) => {
-        // Row-level lock on Equipment to serialize concurrent Cron instances
-        await tx.$queryRaw`SELECT id FROM core."Equipment" WHERE id = ${equipmentId} FOR UPDATE`;
-
-        // Re-read due transfers inside the lock
-        const currentDue = await tx.equipmentTransfer.findMany({
-          where: { equipmentId, status: "APPROVED", effectiveDate: { lte: new Date() } },
-          orderBy: [{ effectiveDate: "asc" }, { id: "asc" }],
-        });
-
-        for (const t of currentDue) {
-          // Atomic claim
-          const claim = await tx.equipmentTransfer.updateMany({
-            where: { id: t.id, status: "APPROVED" },
-            data: { status: "COMPLETED" },
-          });
-          if (claim.count === 0) continue; // already processed
-          await tx.equipment.update({
-            where: { id: equipmentId },
-            data: { projectId: t.toProjectId, sectorId: t.toSectorId },
-          });
-          completed++;
-        }
-      });
-    } catch (err) {
-      // Transaction rolled back; transfers remain APPROVED for retry
-    }
-  }
-  return completed;
 }
