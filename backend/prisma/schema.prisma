@@ -98,6 +98,8 @@ model User {
   reviewReviewed      ReviewRequest[] @relation("ReviewReviewed")
   transferRequestsRequested EquipmentTransferRequest[] @relation("TransferRequested")
   transferRequestsReviewed  EquipmentTransferRequest[] @relation("TransferReviewer")
+  transfersSubmitted  EquipmentTransfer[] @relation("TransferSubmitted")
+  transfersReviewed   EquipmentTransfer[] @relation("TransferReviewed")
 
   @@schema("core")
 }
@@ -162,6 +164,8 @@ model Project {
   assignments    EquipmentAssignment[]
   transferRequestsAsSource EquipmentTransferRequest[] @relation("TransferSourceProject")
   transferRequestsAsDestination EquipmentTransferRequest[] @relation("TransferDestinationProject")
+  transfersFrom  EquipmentTransfer[] @relation("TransferFromProject")
+  transfersTo    EquipmentTransfer[] @relation("TransferToProject")
   users          UserProject[]
 
   @@schema("core")
@@ -219,6 +223,8 @@ model Sector {
   assignments    EquipmentAssignment[]
   transferRequestsAsSource EquipmentTransferRequest[] @relation("TransferSourceSector")
   transferRequestsAsDestination EquipmentTransferRequest[] @relation("TransferDestinationSector")
+  transfersFrom  EquipmentTransfer[] @relation("TransferFromSector")
+  transfersTo    EquipmentTransfer[] @relation("TransferToSector")
 
   @@unique([projectId, name])
   @@schema("core")
@@ -265,6 +271,7 @@ model Equipment {
   oilConsumptions OilConsumption[]
   assignments     EquipmentAssignment[]
   transferRequests EquipmentTransferRequest[]
+  transfers       EquipmentTransfer[]
 
   @@schema("core")
 }
@@ -335,6 +342,38 @@ enum TransferRequestStatus {
 
   @@schema("ops")
 }
+
+model EquipmentTransfer {
+  id               Int       @id @default(autoincrement())
+  equipmentId      Int
+  equipment        Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  fromProjectId    Int?
+  fromProject      Project?  @relation("TransferFromProject", fields: [fromProjectId], references: [id], onDelete: SetNull)
+  fromSectorId     Int?
+  fromSector       Sector?   @relation("TransferFromSector", fields: [fromSectorId], references: [id], onDelete: SetNull)
+  toProjectId      Int?
+  toProject        Project?  @relation("TransferToProject", fields: [toProjectId], references: [id], onDelete: SetNull)
+  toSectorId       Int?
+  toSector         Sector?   @relation("TransferToSector", fields: [toSectorId], references: [id], onDelete: SetNull)
+  effectiveDate    DateTime? @db.Date
+  transferDate     DateTime  @db.Date
+  reason           String?
+  notes            String?
+  status           String    @default("PENDING")
+  submittedById    Int
+  submittedBy      User      @relation("TransferSubmitted", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedById     Int?
+  reviewedBy       User?     @relation("TransferReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status])
+  @@index([equipmentId])
+  @@schema("ops")
+}
+
 model MeterReset {
   id          Int       @id @default(autoincrement())
   equipmentId Int

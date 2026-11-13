@@ -9,7 +9,7 @@ import FaultsPage from "./pages/faults/FaultsPage";
 import OilAlertsPage from "./pages/oil-alerts/OilAlertsPage";
 import OilConsumptionsPage from "./pages/oil-consumptions/OilConsumptionsPage";
 import EquipmentPage from "./pages/equipment/EquipmentPage";
-import EquipmentTransfersPage from "./pages/equipment-transfers/EquipmentTransfersPage";
+import TransfersPage from "./pages/transfers/TransfersPage";
 import TrackingModesPage from "./pages/tracking-modes/TrackingModesPage";
 import RepairOrdersPage from "./pages/repair-orders/RepairOrdersPage";
 import NeedRequestsPage from "./pages/need-requests/NeedRequestsPage";
@@ -81,14 +81,7 @@ export default function App() {
             </RequireAuth>
           }
         />
-        <Route
-          path="/equipment-transfers"
-          element={
-            <RequireAuth roles={["ROOT"]}>
-              <EquipmentTransfersPage />
-            </RequireAuth>
-          }
-        />
+        <Route path="/transfers" element={<TransfersPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

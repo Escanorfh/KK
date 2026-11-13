@@ -46,6 +46,8 @@ model User {
   oilConsumptions     OilConsumption[]
   reviewSubmitted     ReviewRequest[] @relation("ReviewSubmitted")
   reviewReviewed     ReviewRequest[] @relation("ReviewReviewed")
+  transfersSubmitted EquipmentTransfer[] @relation("TransferSubmitted")
+  transfersReviewed  EquipmentTransfer[] @relation("TransferReviewed")
 }
 
 model Project {
@@ -130,10 +132,34 @@ model Equipment {
   faults          Fault[]
   repairOrders    RepairOrder[]
   oilConsumptions OilConsumption[]
+  transfers       EquipmentTransfer[]
 }
 
 // @db.Date اتشالت (مقاس: «Native type Date is not supported for sqlite connector»)، والعمود
 // يفضل DateTime بنفس الدلالة؛ توحيد منتصف الليل UTC مطلوب في TASK 02.
+model EquipmentTransfer {
+  id              Int       @id @default(autoincrement())
+  equipmentId     Int
+  equipment       Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  fromProjectId   Int?
+  fromSectorId    Int?
+  toProjectId     Int?
+  toSectorId      Int?
+  effectiveDate   DateTime?
+  transferDate    DateTime
+  reason          String?
+  notes           String?
+  status          String    @default("PENDING")
+  submittedById   Int
+  submittedBy     User      @relation("TransferSubmitted", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedById    Int?
+  reviewedBy      User?     @relation("TransferReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
 model MeterReset {
   id          Int       @id @default(autoincrement())
   equipmentId Int

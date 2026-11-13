@@ -49,25 +49,30 @@ interface ContextSnapshot {
   contextSource: "SNAPSHOT" | "UNKNOWN";
 }
 
-function captureContext(equipment: {
-  id: number;
-  code: string;
-  name: string;
-  projectId: number | null;
-  sectorId: number | null;
-  project?: { code?: string | null; name?: string | null } | null;
-  sector?: { name?: string | null } | null;
-}): ContextSnapshot {
+async function captureContext(equipmentId: number, date: Date, equipment: { code: string; name: string }): Promise<ContextSnapshot> {
+  const { resolveEquipmentAssignmentAtDate } = await import("../transfers/transfer.service.js");
+  const eff = await resolveEquipmentAssignmentAtDate(equipmentId, date);
+  let projectCode: string | null = null;
+  let projectName: string | null = null;
+  let sectorName: string | null = null;
+  if (eff.projectId != null) {
+    const p = await prisma.project.findUnique({ where: { id: eff.projectId }, select: { code: true, name: true } });
+    projectCode = p?.code ?? null;
+    projectName = p?.name ?? null;
+  }
+  if (eff.sectorId != null) {
+    const s = await prisma.sector.findUnique({ where: { id: eff.sectorId }, select: { name: true } });
+    sectorName = s?.name ?? null;
+  }
   return {
-    projectId: equipment.projectId ?? null,
-    projectCode: equipment.project?.code ?? null,
-    projectName: equipment.project?.name ?? null,
-    sectorId: equipment.sectorId ?? null,
-    sectorName: equipment.sector?.name ?? null,
+    projectId: eff.projectId,
+    projectCode,
+    projectName,
+    sectorId: eff.sectorId,
+    sectorName,
     equipmentCode: equipment.code,
     equipmentName: equipment.name,
-    contextSource:
-      equipment.projectId != null || equipment.sectorId != null ? "SNAPSHOT" : "UNKNOWN",
+    contextSource: eff.projectId != null || eff.sectorId != null ? "SNAPSHOT" : "UNKNOWN",
   };
 }
 
@@ -222,7 +227,7 @@ export async function save(input: SaveInput, userId: number) {
           equipmentName: equipment.name,
           contextSource: "UNKNOWN",
         }
-    : captureContext(equipment);
+    : await captureContext(input.equipmentId, date, equipment);
 
   if (!input.id && equipment.trackingMode !== "KM") {
     await assertMeterNotBelowBaseline(input.equipmentId, date, input.endMeter ?? null);
@@ -326,19 +331,28 @@ export async function createApproved(
     await assertMeterNotBelowBaseline(normalized.equipmentId, date, normalized.endMeter ?? null);
   }
 
+  let effProjectId = context?.projectId ?? null;
+  let effSectorId = context?.sectorId ?? null;
+  if (effProjectId == null && effSectorId == null && (context?.contextSource ?? "UNKNOWN") === "UNKNOWN") {
+    const { resolveEquipmentAssignmentAtDate } = await import("../transfers/transfer.service.js");
+    const eff = await resolveEquipmentAssignmentAtDate(normalized.equipmentId, date);
+    effProjectId = eff.projectId;
+    effSectorId = eff.sectorId;
+  }
+  const effProject = effProjectId != null ? await prisma.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
+  const effSector = effSectorId != null ? await prisma.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
+
   const ctx: ContextSnapshot = {
-    projectId: context?.projectId ?? equipment.projectId ?? null,
-    projectCode: context?.projectCode ?? equipment.project?.code ?? null,
-    projectName: context?.projectName ?? equipment.project?.name ?? null,
-    sectorId: context?.sectorId ?? equipment.sectorId ?? null,
-    sectorName: context?.sectorName ?? equipment.sector?.name ?? null,
+    projectId: effProjectId,
+    projectCode: context?.projectCode ?? effProject?.code ?? null,
+    projectName: context?.projectName ?? effProject?.name ?? null,
+    sectorId: effSectorId,
+    sectorName: context?.sectorName ?? effSector?.name ?? null,
     equipmentCode: context?.equipmentCode ?? equipment.code,
     equipmentName: context?.equipmentName ?? equipment.name,
     contextSource:
       (context?.contextSource as "SNAPSHOT" | "UNKNOWN" | undefined) ??
-      (context?.projectId != null || context?.sectorId != null || equipment.projectId != null || equipment.sectorId != null
-        ? "SNAPSHOT"
-        : "UNKNOWN"),
+      (effProjectId != null || effSectorId != null ? "SNAPSHOT" : "UNKNOWN"),
   };
 
   const sameDay = await db.dailyLog.findUnique({

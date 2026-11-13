@@ -46,9 +46,7 @@ import {
   type MeterReset,
   type EquipmentAssignment,
 } from "@/services/equipments";
-import { createTransferRequest } from "@/services/transferRequests";
 import { projectOptions } from "@/services/projects";
-import { listSectors } from "@/services/projects";
 import {
   getPartAlerts,
   listPartSchedules,
@@ -100,15 +98,6 @@ export default function EquipmentPage() {
   const canSync = user?.role === "ROOT" || user?.role === "ADMIN";
 
   const [selected, setSelected] = useState<Equipment | null>(null);
-  const [transferOpen, setTransferOpen] = useState(false);
-  const [transferProjects, setTransferProjects] = useState<{ id: number; name: string }[]>([]);
-  const [transferProjectId, setTransferProjectId] = useState<number | "">("");
-  const [transferSectors, setTransferSectors] = useState<{ id: number; name: string }[]>([]);
-  const [transferSectorId, setTransferSectorId] = useState<number | "">("");
-  const [transferDate, setTransferDate] = useState(todayLocal());
-  const [transferReason, setTransferReason] = useState("");
-  const [transferNotes, setTransferNotes] = useState("");
-  const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [tab, setTab] = useState<TabKey>("overview");
   const [detail, setDetail] = useState<DetailData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -341,67 +330,6 @@ export default function EquipmentPage() {
     setSelected(eq);
     setTab("overview");
     void loadDetail(eq);
-  };
-
-  const openTransfer = async () => {
-    if (!selected) return;
-    setTransferOpen(true);
-    setTransferProjectId("");
-    setTransferSectorId("");
-    setTransferSectors([]);
-    setTransferDate(todayLocal());
-    setTransferReason("");
-    setTransferNotes("");
-    try {
-      const opts = await projectOptions();
-      setTransferProjects(opts);
-    } catch (err) {
-      toast.error(getApiError(err));
-    }
-  };
-
-  const onTransferProjectChange = async (pid: number | "") => {
-    setTransferProjectId(pid);
-    setTransferSectorId("");
-    setTransferSectors([]);
-    if (pid === "") return;
-    try {
-      const secs = await listSectors(Number(pid));
-      setTransferSectors(secs as any);
-    } catch (err) {
-      toast.error(getApiError(err));
-    }
-  };
-
-  const submitTransfer = async () => {
-    if (!selected || transferProjectId === "" || transferSectorId === "") {
-      toast.error("اختر المشروع والقطاع المستهدفين");
-      return;
-    }
-    if (
-      selected.project?.id === transferProjectId &&
-      selected.sector?.id === transferSectorId
-    ) {
-      toast.error("التخصيص المستهدف هو نفسه الحالي");
-      return;
-    }
-    setTransferSubmitting(true);
-    try {
-      await createTransferRequest({
-        equipmentId: selected.id,
-        destinationProjectId: Number(transferProjectId),
-        destinationSectorId: Number(transferSectorId),
-        transferDate: transferDate,
-        reason: transferReason || null,
-        notes: transferNotes || null,
-      });
-      toast.success("تم إرسال طلب النقل (قيد الانتظار) — النقل الفعلي يتم عبر System المديرين");
-      setTransferOpen(false);
-    } catch (err) {
-      toast.error(getApiError(err));
-    } finally {
-      setTransferSubmitting(false);
-    }
   };
 
   const clear = () => {
@@ -734,12 +662,6 @@ export default function EquipmentPage() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={openTransfer}
-              className="no-print flex items-center gap-1.5 text-xs font-bold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 transition-colors shrink-0"
-            >
-              نقل المعدة
-            </button>
             <button
               onClick={() => window.print()}
               title="طباعة نموذج سجل المعدة"
@@ -1506,55 +1428,8 @@ export default function EquipmentPage() {
           </div>
         </div>
       )}
-      {transferOpen && selected && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" onClick={() => setTransferOpen(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-bold text-slate-800">نقل المعدة — {selected.code}</h3>
-            <p className="text-xs text-slate-500">
-              التخصيص الحالي: {selected.project?.name || "بدون مشروع"} — {selected.sector?.name || "بدون قطاع"}
-            </p>
-            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-              النقل الفعلي يتم عبر System المديرين. هذا الطلب يُسجَّل كـ "قيد الانتظار" ولن يغيّر التخصيص الفعلي حتى تأكيد النظام المعتمد.
-            </p>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-600">المشروع المستهدف</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={transferProjectId} onChange={(e) => onTransferProjectChange(e.target.value === "" ? "" : Number(e.target.value))}>
-                <option value="">اختر مشروعًا</option>
-                {transferProjects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-600">القطاع المستهدف</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={transferSectorId} onChange={(e) => setTransferSectorId(e.target.value === "" ? "" : Number(e.target.value))} disabled={transferProjectId === ""}>
-                <option value="">اختر قطاعًا</option>
-                {transferSectors.map((s: any) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-600">تاريخ النقل</label>
-              <input type="date" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-600">السبب (اختياري)</label>
-              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-600">ملاحظات (اختياري)</label>
-              <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" rows={2} value={transferNotes} onChange={(e) => setTransferNotes(e.target.value)} />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setTransferOpen(false)} className="text-xs font-semibold rounded-lg border border-slate-300 px-3 py-2 hover:bg-slate-50">إلغاء</button>
-              <button onClick={submitTransfer} disabled={transferSubmitting} className="text-xs font-bold rounded-lg bg-primary-600 text-white px-4 py-2 hover:bg-primary-700 disabled:opacity-60">
-                {transferSubmitting ? "جارٍ الإرسال..." : "تأكيد طلب النقل"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
+
     </>
   );
 }

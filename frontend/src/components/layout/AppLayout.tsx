@@ -11,6 +11,7 @@ import {
   Droplets,
   Fuel,
   FileCog,
+  Truck,
   PackagePlus,
   HardHat,
   FolderKanban,
@@ -19,7 +20,6 @@ import {
   SlidersHorizontal,
   LogOut,
   Download,
-  ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConnectionStatus from "@/components/ConnectionStatus";
@@ -49,6 +49,7 @@ const sections: { title: string; links: NavLink[] }[] = [
     links: [
       { to: "/faults", label: "جدول الأعطال", icon: AlertTriangle },
       { to: "/repair-orders", label: "أوامر الإصلاح", icon: FileCog },
+      { to: "/transfers", label: "نقل المعدات", icon: Truck },
       { to: "/need-requests", label: "طلبات الاحتياج", icon: PackagePlus },
       { to: "/oil-alerts", label: "تنبيهات الزيوت", icon: Droplets },
       { to: "/oil-consumptions", label: "استهلكات الزيوت", icon: Fuel },
@@ -68,7 +69,6 @@ const sections: { title: string; links: NavLink[] }[] = [
       { to: "/review", label: "مراجعة البيانات", icon: ClipboardCheck, roles: ["ROOT", "ADMIN"] },
       { to: "/users", label: "المستخدمين", icon: Users, roles: ["ROOT", "ADMIN"] },
       { to: "/data-management", label: "إدارة البيانات", icon: Database, roles: ["ROOT"] },
-      { to: "/equipment-transfers", label: "نقل المعدات", icon: ArrowRightLeft, roles: ["ROOT"] },
     ],
   },
 ];

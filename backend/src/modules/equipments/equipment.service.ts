@@ -786,9 +786,14 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
 
       const existing = await prisma.equipment.findUnique({ where: { code } });
       if (existing) {
+        // حماية: إذا كانت هناك عملية نقل معتمدة/مكتملة لهذه المعدة، لا نكتب فوق تخصيصها.
+        const hasProtectedTransfer = await prisma.equipmentTransfer.findFirst({
+          where: { equipmentId: existing.id, status: { in: ["APPROVED", "COMPLETED"] } },
+          select: { id: true },
+        });
         const needsName = name !== existing.name && name !== existing.code;
-        const needsProject = projectId != null && existing.projectId !== projectId;
-        const needsSector = sectorId != null && existing.sectorId !== sectorId;
+        const needsProject = !hasProtectedTransfer && projectId != null && existing.projectId !== projectId;
+        const needsSector = !hasProtectedTransfer && sectorId != null && existing.sectorId !== sectorId;
         const needsCategory = !existing.categoryId && category != null;
         if (needsName || needsProject || needsSector || needsCategory) {
           await prisma.equipment.update({
