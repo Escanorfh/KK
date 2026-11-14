@@ -19,6 +19,40 @@ export async function createEquipment(payload: {
   return data;
 }
 
+export interface RegisterEquipmentPayload {
+  code: string;
+  name: string;
+  categoryId?: number | null;
+  trackingMode?: TrackingMode;
+  trackingModeConfirmed?: boolean;
+  projectId: number;
+  sectorId?: number | null;
+  meterHours?: number | null;
+  meterKm?: number | null;
+}
+
+export interface RegisterEquipmentResponse {
+  equipment: Equipment & { createdAt?: string };
+  meterReset: MeterReset | null;
+  baselineDate: string | null;
+  assignment: {
+    projectId: number;
+    sectorId: number | null;
+    projectSectorId: number | null;
+    effectiveFrom: string;
+    sourceSystem: string;
+  } | null;
+}
+
+/** ROOT-only: تسجيل معدة جديدة مع المشروع والقطاع وآخر قراءة للعداد. */
+export async function registerEquipment(payload: RegisterEquipmentPayload) {
+  const { data } = await api.post<RegisterEquipmentResponse>(
+    "/equipments/register",
+    payload
+  );
+  return data;
+}
+
 export async function updateEquipment(
   id: number,
   payload: Partial<{

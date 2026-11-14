@@ -18,6 +18,7 @@ import {
   Users,
   Database,
   SlidersHorizontal,
+  PlusCircle,
   LogOut,
   Download,
 } from "lucide-react";
@@ -65,6 +66,7 @@ const sections: { title: string; links: NavLink[] }[] = [
   {
     title: "الإدارة",
     links: [
+      { to: "/equipment/new", label: "إضافة معدة جديدة", icon: PlusCircle, roles: ["ROOT"] },
       { to: "/tracking-modes", label: "أوضاع التتبع والفئات", icon: SlidersHorizontal, roles: ["ROOT", "ADMIN"] },
       { to: "/review", label: "مراجعة البيانات", icon: ClipboardCheck, roles: ["ROOT", "ADMIN"] },
       { to: "/users", label: "المستخدمين", icon: Users, roles: ["ROOT", "ADMIN"] },
@@ -130,6 +132,7 @@ export default function AppLayout() {
                     <NavLink
                       key={to}
                       to={to}
+                      end
                       className={({ isActive }) =>
                         cn(
                           "flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors",

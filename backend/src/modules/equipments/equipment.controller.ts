@@ -60,6 +60,15 @@ export async function create(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function register(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await equipmentService.registerEquipment(req.body, req.user!.id);
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const equipment = await equipmentService.update(Number(req.params.id), req.body, req.user!.id);

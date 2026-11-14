@@ -24,6 +24,44 @@ export const createEquipmentSchema = z.object({
 
 export const updateEquipmentSchema = createEquipmentSchema.partial();
 
+const optionalMeterReading = z.preprocess(
+  (v) => (v === "" || v === undefined ? null : v),
+  z
+    .number({ invalid_type_error: "قراءة العداد يجب أن تكون رقمًا" })
+    .finite("قراءة العداد غير صحيحة")
+    .min(0, "قراءة العداد لا يمكن أن تكون سالبة")
+    .nullable()
+);
+
+/**
+ * تسجيل معدة جديدة (ROOT فقط) مع المشروع والقطاع وآخر قراءة للعداد.
+ * المشروع إلزامي هنا لأن الصفحة مخصّصة للتخصيص الأولي للمعدة.
+ * القطاع اختياري (نفس قواعد إنشاء المعدة الحالية) لكنه يجب أن يكون مرتبطًا
+ * بالمشروع عبر صف ProjectSector نشط.
+ */
+export const registerEquipmentSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(1, "كود المعدة مطلوب")
+    .max(64, "كود المعدة أطول من الحد المسموح"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "اسم المعدة مطلوب")
+    .max(200, "اسم المعدة أطول من الحد المسموح"),
+  categoryId: z.coerce.number().int().positive("فئة المعدة غير صحيحة").nullable().optional(),
+  trackingMode: trackingModeSchema.optional(),
+  trackingModeConfirmed: z.boolean().optional(),
+  projectId: z.coerce
+    .number({ invalid_type_error: "المشروع مطلوب" })
+    .int("المشروع غير صحيح")
+    .positive("المشروع مطلوب"),
+  sectorId: z.coerce.number().int().positive("القطاع غير صحيح").nullable().optional(),
+  meterHours: optionalMeterReading.optional(),
+  meterKm: optionalMeterReading.optional(),
+});
+
 export const createCategorySchema = z.object({
   name: z.string().trim().min(1, "اسم الفئة مطلوب"),
   codePrefixes: z

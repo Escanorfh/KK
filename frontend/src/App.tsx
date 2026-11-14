@@ -9,6 +9,7 @@ import FaultsPage from "./pages/faults/FaultsPage";
 import OilAlertsPage from "./pages/oil-alerts/OilAlertsPage";
 import OilConsumptionsPage from "./pages/oil-consumptions/OilConsumptionsPage";
 import EquipmentPage from "./pages/equipment/EquipmentPage";
+import RegisterEquipmentPage from "./pages/equipment/RegisterEquipmentPage";
 import TransfersPage from "./pages/transfers/TransfersPage";
 import TrackingModesPage from "./pages/tracking-modes/TrackingModesPage";
 import RepairOrdersPage from "./pages/repair-orders/RepairOrdersPage";
@@ -46,6 +47,14 @@ export default function App() {
         <Route path="/oil-alerts" element={<OilAlertsPage />} />
         <Route path="/oil-consumptions" element={<OilConsumptionsPage />} />
         <Route path="/equipment" element={<EquipmentPage />} />
+        <Route
+          path="/equipment/new"
+          element={
+            <RequireAuth roles={["ROOT"]}>
+              <RegisterEquipmentPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/tracking-modes"
           element={

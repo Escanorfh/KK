@@ -4,6 +4,7 @@ import { validate, validateQuery } from "../../middleware/validate.middleware";
 import { requireAuth, requireRole } from "../../middleware/auth.middleware";
 import {
   createEquipmentSchema,
+  registerEquipmentSchema,
   updateEquipmentSchema,
   lookupQuerySchema,
   listEquipmentQuerySchema,
@@ -42,6 +43,14 @@ router.get(
   equipmentController.trackingReview
 );
 router.get("/", validateQuery(listEquipmentQuerySchema), equipmentController.list);
+// ROOT-only registration endpoint. Deliberately separate from POST "/" so the
+// permissions of the existing equipment pages/APIs stay unchanged.
+router.post(
+  "/register",
+  requireRole("ROOT"),
+  validate(registerEquipmentSchema),
+  equipmentController.register
+);
 router.post("/sync-managers", requireRole("ROOT", "ADMIN"), equipmentController.syncManagers);
 router.get(
   "/:id/last-meter",

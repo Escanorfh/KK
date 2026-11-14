@@ -2,7 +2,7 @@ import type { Prisma, TrackingMode } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { issueAttestation } from "../../utils/attestation";
 import { logAudit } from "../../utils/audit";
-import { ASSIGNMENT_SOURCES, activeProjectSectorId, listAssignments as listAssignmentHistory, recordAssignmentSafe } from "../../utils/assignmentHistory";
+import { ASSIGNMENT_SOURCES, activeProjectSectorId, listAssignments as listAssignmentHistory, recordAssignment, recordAssignmentSafe } from "../../utils/assignmentHistory";
 import { resolveTrackingSetup, UNCLASSIFIED_CATEGORY } from "./trackingMode";
 import { scopeOr } from "../../utils/scope";
 import { ensureSectorLink } from "../sectors/sector.service";
@@ -468,6 +468,191 @@ export async function create(
     categoryId: category?.id ?? null,
   });
   return equipment;
+}
+
+export interface RegisterEquipmentInput {
+  code: string;
+  name: string;
+  categoryId?: number | null;
+  trackingMode?: TrackingMode;
+  trackingModeConfirmed?: boolean;
+  projectId: number;
+  sectorId?: number | null;
+  meterHours?: number | null;
+  meterKm?: number | null;
+}
+
+function assertMeterReading(value: number | null | undefined, label: string) {
+  if (value == null) return;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    fail(`قراءة ${label} غير صحيحة`, 400);
+  }
+  if (value < 0) {
+    fail(`قراءة ${label} لا يمكن أن تكون سالبة`, 400);
+  }
+}
+
+/**
+ * تسجيل معدة جديدة مع تخصيصها الأولي وآخر قراءة للعداد (ROOT فقط في طبقة الراوت).
+ *
+ * - كل الكتابات (المعدة + التخصيص + نقطة بداية العداد) داخل Transaction واحدة.
+ * - التخصيص يُسجَّل في EquipmentAssignment بمصدر EFMS_MANUAL وبداية = وقت الإنشاء
+ *   الفعلي (بدون تاريخ وهمي وبدون Transfer).
+ * - آخر قراءة تُحفظ في MeterReset فقط، ولا تُنشئ DailyLog.
+ * - القطاع يجب أن يكون مرتبطًا بالمشروع عبر ProjectSector نشط — لا رجوع
+ *   لـ Sector.projectId ولا إنشاء/تفعيل ربط تلقائي.
+ */
+export async function registerEquipment(data: RegisterEquipmentInput, userId: number) {
+  const code = data.code.trim();
+  const name = data.name.trim();
+
+  const duplicate = await prisma.equipment.findUnique({
+    where: { code },
+    select: { id: true },
+  });
+  if (duplicate) {
+    fail("كود المعدة مستخدم من قبل", 409);
+  }
+
+  const project = await prisma.project.findUnique({
+    where: { id: data.projectId },
+    select: { id: true },
+  });
+  if (!project) {
+    fail("المشروع غير موجود", 404);
+  }
+
+  const sectorId = data.sectorId ?? null;
+  let projectSectorId: number | null = null;
+  if (sectorId != null) {
+    const sector = await prisma.sector.findUnique({
+      where: { id: sectorId },
+      select: { id: true },
+    });
+    if (!sector) {
+      fail("القطاع غير موجود", 404);
+    }
+    const link = await prisma.projectSector.findFirst({
+      where: { projectId: data.projectId, sectorId, active: true },
+      select: { id: true },
+    });
+    if (!link) {
+      fail("القطاع لا ينتمي لهذا المشروع", 400);
+    }
+    projectSectorId = link.id;
+  }
+
+  let category =
+    data.categoryId !== undefined && data.categoryId !== null
+      ? await resolveCategory(data.categoryId)
+      : undefined;
+  if (category === undefined) {
+    const byPrefix = await categoryByPrefixMap();
+    const prefix = codePrefix(code);
+    category = (prefix ? byPrefix.get(prefix) : undefined) ?? null;
+  }
+
+  const tracking = resolveTrackingSetup({
+    category,
+    explicitMode: data.trackingMode,
+    explicitConfirmed: data.trackingModeConfirmed,
+  });
+  const trackingMode = tracking.trackingMode;
+  const hoursApplicable = trackingMode !== "KM";
+  const kmApplicable = trackingMode !== "HOURS";
+
+  assertMeterReading(data.meterHours, "العداد بالساعات");
+  assertMeterReading(data.meterKm, "العداد بالكيلومترات");
+
+  if (!hoursApplicable && data.meterHours != null) {
+    fail("وضع تتبع هذه المعدة بالكيلومترات فقط — لا يمكن إدخال قراءة الساعات", 400);
+  }
+  if (!kmApplicable && data.meterKm != null) {
+    fail("وضع تتبع هذه المعدة بالساعات فقط — لا يمكن إدخال قراءة الكيلومترات", 400);
+  }
+
+  const hours = hoursApplicable ? (data.meterHours ?? null) : null;
+  const km = kmApplicable ? (data.meterKm ?? null) : null;
+  const hasBaseline = hours != null || km != null;
+  const baselineDate = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+
+  const { equipment, meterReset } = await prisma.$transaction(async (tx) => {
+    const created = await tx.equipment.create({
+      data: {
+        code,
+        name,
+        projectId: data.projectId,
+        sectorId,
+        categoryId: category?.id ?? null,
+        trackingMode,
+        trackingModeOverridden: tracking.trackingModeOverridden,
+        trackingModeConfirmed: tracking.trackingModeConfirmed,
+        hasOdometer: trackingMode !== "HOURS",
+      },
+      include: equipmentInclude,
+    });
+
+    await recordAssignment(
+      {
+        equipmentId: created.id,
+        projectId: data.projectId,
+        sectorId,
+        projectSectorId,
+        sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+        sourceReference: `registration:user:${userId}`,
+        at: created.createdAt,
+      },
+      tx
+    );
+
+    let reset = null;
+    if (hasBaseline) {
+      reset = await tx.meterReset.create({
+        data: {
+          equipmentId: created.id,
+          date: baselineDate,
+          hours,
+          km,
+          notes: "آخر قراءة للعداد عند إضافة المعدة",
+        },
+      });
+    }
+
+    return { equipment: created, meterReset: reset };
+  });
+
+  await logAudit(userId, "Equipment", equipment.id, "CREATE", {
+    code: equipment.code,
+    name: equipment.name,
+    trackingMode,
+    categoryId: category?.id ?? null,
+    projectId: data.projectId,
+    sectorId,
+    projectSectorId,
+    source: "register",
+  });
+  if (meterReset) {
+    await logAudit(userId, "MeterReset", meterReset.id, "CREATE", {
+      equipmentId: equipment.id,
+      date: baselineDate.toISOString().slice(0, 10),
+      hours: meterReset.hours,
+      km: meterReset.km,
+      kind: "BASELINE_ON_REGISTER",
+    });
+  }
+
+  return {
+    equipment,
+    meterReset,
+    baselineDate: hasBaseline ? baselineDate.toISOString().slice(0, 10) : null,
+    assignment: {
+      projectId: data.projectId,
+      sectorId,
+      projectSectorId,
+      effectiveFrom: equipment.createdAt,
+      sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+    },
+  };
 }
 
 export async function update(
