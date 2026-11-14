@@ -118,7 +118,8 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 export default function RegisterEquipmentPage() {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<number | "">("");
+  const [categoryId, setCategoryId] = useState<number | "" | "other">("");
+  const [newCategoryName, setNewCategoryName] = useState("");
   const [trackingMode, setTrackingMode] = useState<TrackingMode>("BOTH");
   const [projectId, setProjectId] = useState<number | "">("");
   const [sectorId, setSectorId] = useState<number | "">("");
@@ -204,12 +205,27 @@ export default function RegisterEquipmentPage() {
   const handleCategoryChange = (value: string) => {
     if (value === "") {
       setCategoryId("");
+      setNewCategoryName("");
+      return;
+    }
+    if (value === "other") {
+      setCategoryId("other");
       return;
     }
     const id = Number(value);
     setCategoryId(id);
+    setNewCategoryName("");
     const category = categories.find((c) => c.id === id);
     if (category) setTrackingMode(category.defaultTrackingMode);
+  };
+
+  /** تحديث قائمة الفئات بعد إنشاء فئة جديدة من خيار «أخرى». */
+  const refreshCategories = () => {
+    listCategories()
+      .then(setCategories)
+      .catch(() => {
+        /* القائمة القديمة تبقى معروضة — الخطأ غير حاسم هنا */
+      });
   };
 
   const handleTrackingModeChange = (mode: TrackingMode) => {
@@ -240,6 +256,9 @@ export default function RegisterEquipmentPage() {
     if (!code.trim()) errors.code = "كود المعدة مطلوب";
     if (!name.trim()) errors.name = "اسم المعدة مطلوب";
     if (projectId === "") errors.projectId = "يجب اختيار المشروع";
+    if (categoryId === "other" && newCategoryName.trim().length < 2) {
+      errors.newCategoryName = "اكتب اسم الفئة الجديدة (حرفين على الأقل)";
+    }
 
     if (hoursApplicable && meterHours.trim() !== "") {
       const parsed = toNumberOrNull(meterHours);
@@ -264,7 +283,9 @@ export default function RegisterEquipmentPage() {
       const result = await registerEquipment({
         code: code.trim(),
         name: name.trim(),
-        categoryId: categoryId === "" ? null : Number(categoryId),
+        categoryId: categoryId === "" || categoryId === "other" ? null : Number(categoryId),
+        newCategoryName:
+          categoryId === "other" ? newCategoryName.trim() : undefined,
         trackingMode,
         projectId: Number(projectId),
         sectorId: sectorId === "" ? null : Number(sectorId),
@@ -272,6 +293,7 @@ export default function RegisterEquipmentPage() {
         meterKm: km,
       });
       setSuccess(result);
+      if (result.categoryCreated) refreshCategories();
       toast.success(`تمت إضافة المعدة ${result.equipment.code}`);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
@@ -288,6 +310,7 @@ export default function RegisterEquipmentPage() {
     setCode("");
     setName("");
     setCategoryId("");
+    setNewCategoryName("");
     setTrackingMode("BOTH");
     setProjectId("");
     setSectorId("");
@@ -333,6 +356,13 @@ export default function RegisterEquipmentPage() {
               value={success.baselineDate || "لم تُسجل قراءة"}
             />
           </div>
+
+          {success.categoryCreated && (
+            <div className="mx-5 mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
+              أُضيفت الفئة «{success.equipment.category?.name}» إلى قائمة الفئات وستظهر في
+              الاختيارات.
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50/60">
             <button
@@ -425,8 +455,27 @@ export default function RegisterEquipmentPage() {
                   {c.name}
                 </option>
               ))}
+              <option value="other">أخرى — فئة جديدة</option>
             </select>
           </Field>
+
+          {categoryId === "other" && (
+            <Field
+              label="اسم الفئة الجديدة"
+              required
+              error={fieldErrors.newCategoryName}
+              hint="ستُحفظ في قائمة الفئات وتظهر في الاختيارات لاحقًا."
+            >
+              <input
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="مثال: مولدات"
+                className={inputCls}
+                disabled={saving}
+                autoComplete="off"
+              />
+            </Field>
+          )}
 
           <Field
             label="نوع العداد"

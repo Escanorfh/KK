@@ -26,6 +26,7 @@ interface State {
     equipment: number;
     assignment: number;
     meterReset: number;
+    category: number;
   };
 }
 
@@ -55,7 +56,7 @@ function reset(): State {
     assignments: [],
     meterResets: [],
     audits: [],
-    seq: { project: 2, sector: 100, link: 600, equipment: 900, assignment: 1000, meterReset: 2000 },
+    seq: { project: 2, sector: 100, link: 600, equipment: 900, assignment: 1000, meterReset: 2000, category: 100 },
   };
   transferCalls = 0;
   dailyLogCalls = 0;
@@ -88,8 +89,13 @@ const prismaMock: any = {
       if (where?.name != null) return db.categories.find((c) => c.name === where.name) ?? null;
       return null;
     },
+    create: async ({ data }: any) => {
+      const row = { id: ++db.seq.category, ...data };
+      db.categories.push(row);
+      return { ...row };
+    },
     createMany: async ({ data }: any) => {
-      for (const item of data) db.categories.push({ id: db.categories.length + 1, ...item });
+      for (const item of data) db.categories.push({ id: ++db.seq.category, ...item });
       return { count: data.length };
     },
   },
@@ -240,6 +246,68 @@ test("القطاع اختياري ويُقبل بدون قطاع", async () => {
   assert.equal(db.equipments[0].sectorId, null);
   assert.equal(db.assignments[0].sectorId, null);
   assert.equal(db.assignments[0].projectSectorId, null);
+});
+
+/* --------------------------- فئة جديدة «أخرى» --------------------------- */
+
+test("خيار أخرى ينشئ فئة جديدة ويحفظ المعدة بها", async () => {
+  reset();
+  const { registerEquipment } = await service();
+  const before = db.categories.length;
+
+  const result = await registerEquipment(
+    { ...baseInput(), categoryId: null, newCategoryName: "مولدات" },
+    7
+  );
+
+  assert.equal(db.categories.length, before + 1, "فئة واحدة جديدة فقط");
+  const category = db.categories.find((c) => c.name === "مولدات");
+  assert.ok(category, "الفئة الجديدة اتحفظت في الاختيارات");
+  assert.equal(category.defaultTrackingMode, "HOURS", "تأخذ وضع التتبع المختار");
+  assert.equal(db.equipments[0].categoryId, category.id, "المعدة مربوطة بالفئة الجديدة");
+  assert.equal(result.categoryCreated, true);
+});
+
+test("اسم فئة جديد مطابق لفئة موجودة يُعاد استخدامه بدون تكرار", async () => {
+  reset();
+  db.categories.push({ id: 50, name: "مولدات", codePrefixes: [], defaultTrackingMode: "KM" });
+  const { registerEquipment } = await service();
+
+  const result = await registerEquipment(
+    { ...baseInput(), categoryId: null, newCategoryName: "مولدات" },
+    7
+  );
+
+  assert.equal(
+    db.categories.filter((c) => c.name === "مولدات").length,
+    1,
+    "مافيش فئة مكررة"
+  );
+  assert.equal(db.equipments[0].categoryId, 50);
+  assert.equal(result.categoryCreated, false);
+});
+
+test("فشل التخصيص يرجّع الفئة الجديدة أيضًا (transaction)", async () => {
+  reset();
+  failAssignment = true;
+  const { registerEquipment } = await service();
+
+  await assert.rejects(() =>
+    registerEquipment({ ...baseInput(), categoryId: null, newCategoryName: "مولدات" }, 7)
+  );
+  assert.equal(
+    db.categories.find((c) => c.name === "مولدات"),
+    undefined,
+    "الفئة الجديدة ما اتحفظتش"
+  );
+  assert.equal(db.equipments.length, 0);
+});
+
+test("تمرير فئة موجودة واسم فئة جديدة معًا مرفوض", async () => {
+  reset();
+  const { registerEquipment } = await service();
+  await rejected(registerEquipment({ ...baseInput(), newCategoryName: "مولدات" }, 7), 400);
+  assert.equal(db.equipments.length, 0);
 });
 
 /* ----------------------------- validation ----------------------------- */

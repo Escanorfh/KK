@@ -23,6 +23,8 @@ export interface RegisterEquipmentPayload {
   code: string;
   name: string;
   categoryId?: number | null;
+  /** خيار «أخرى»: اسم فئة جديدة تُضاف إلى قائمة الفئات. */
+  newCategoryName?: string;
   trackingMode?: TrackingMode;
   trackingModeConfirmed?: boolean;
   projectId: number;
@@ -35,6 +37,7 @@ export interface RegisterEquipmentResponse {
   equipment: Equipment & { createdAt?: string };
   meterReset: MeterReset | null;
   baselineDate: string | null;
+  categoryCreated?: boolean;
   assignment: {
     projectId: number;
     sectorId: number | null;

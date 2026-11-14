@@ -474,6 +474,8 @@ export interface RegisterEquipmentInput {
   code: string;
   name: string;
   categoryId?: number | null;
+  /** خيار «أخرى»: يُنشئ فئة بهذا الاسم (أو يعيد استخدام الموجودة) داخل نفس العملية. */
+  newCategoryName?: string;
   trackingMode?: TrackingMode;
   trackingModeConfirmed?: boolean;
   projectId: number;
@@ -542,84 +544,129 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
     projectSectorId = link.id;
   }
 
-  let category =
+  if (data.categoryId != null && data.newCategoryName) {
+    fail("اختر فئة موجودة أو أدخل اسم فئة جديدة — وليس الاثنين معًا", 400);
+  }
+
+  const newCategoryName = data.newCategoryName?.trim() ?? null;
+  const existingCategory =
     data.categoryId !== undefined && data.categoryId !== null
       ? await resolveCategory(data.categoryId)
-      : undefined;
-  if (category === undefined) {
+      : null;
+
+  // فئة مشتقة من بادئة الكود (إن لم يختر المستخدم فئة ولم يكتب فئة جديدة).
+  let prefixCategory: Awaited<ReturnType<typeof resolveCategory>> = null;
+  if (!existingCategory && !newCategoryName) {
     const byPrefix = await categoryByPrefixMap();
     const prefix = codePrefix(code);
-    category = (prefix ? byPrefix.get(prefix) : undefined) ?? null;
+    prefixCategory = (prefix ? byPrefix.get(prefix) : undefined) ?? null;
   }
 
-  const tracking = resolveTrackingSetup({
-    category,
-    explicitMode: data.trackingMode,
-    explicitConfirmed: data.trackingModeConfirmed,
-  });
-  const trackingMode = tracking.trackingMode;
-  const hoursApplicable = trackingMode !== "KM";
-  const kmApplicable = trackingMode !== "HOURS";
+  const { equipment, meterReset, category, categoryCreated, trackingMode, hasBaseline, baselineDate } =
+    await prisma.$transaction(async (tx) => {
+      let resolvedCategory = existingCategory ?? prefixCategory;
+      let createdCategory = false;
 
-  assertMeterReading(data.meterHours, "العداد بالساعات");
-  assertMeterReading(data.meterKm, "العداد بالكيلومترات");
+      // خيار «أخرى»: تُنشأ الفئة داخل نفس الـ transaction، أو يُعاد استخدام
+      // فئة موجودة بنفس الاسم (الاسم فريد في قاعدة البيانات) بدون تكرار.
+      if (!resolvedCategory && newCategoryName) {
+        resolvedCategory =
+          (await tx.equipmentCategory.findUnique({ where: { name: newCategoryName } })) ?? null;
+        if (!resolvedCategory) {
+          resolvedCategory = await tx.equipmentCategory.create({
+            data: {
+              name: newCategoryName,
+              codePrefixes: [],
+              defaultTrackingMode: data.trackingMode ?? "BOTH",
+            },
+          });
+          createdCategory = true;
+        }
+      }
 
-  if (!hoursApplicable && data.meterHours != null) {
-    fail("وضع تتبع هذه المعدة بالكيلومترات فقط — لا يمكن إدخال قراءة الساعات", 400);
-  }
-  if (!kmApplicable && data.meterKm != null) {
-    fail("وضع تتبع هذه المعدة بالساعات فقط — لا يمكن إدخال قراءة الكيلومترات", 400);
-  }
+      const tracking = resolveTrackingSetup({
+        category: resolvedCategory,
+        explicitMode: data.trackingMode,
+        explicitConfirmed: data.trackingModeConfirmed,
+      });
+      const mode = tracking.trackingMode;
+      const hoursApplicable = mode !== "KM";
+      const kmApplicable = mode !== "HOURS";
 
-  const hours = hoursApplicable ? (data.meterHours ?? null) : null;
-  const km = kmApplicable ? (data.meterKm ?? null) : null;
-  const hasBaseline = hours != null || km != null;
-  const baselineDate = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+      assertMeterReading(data.meterHours, "العداد بالساعات");
+      assertMeterReading(data.meterKm, "العداد بالكيلومترات");
 
-  const { equipment, meterReset } = await prisma.$transaction(async (tx) => {
-    const created = await tx.equipment.create({
-      data: {
-        code,
-        name,
-        projectId: data.projectId,
-        sectorId,
-        categoryId: category?.id ?? null,
-        trackingMode,
-        trackingModeOverridden: tracking.trackingModeOverridden,
-        trackingModeConfirmed: tracking.trackingModeConfirmed,
-        hasOdometer: trackingMode !== "HOURS",
-      },
-      include: equipmentInclude,
+      if (!hoursApplicable && data.meterHours != null) {
+        fail("وضع تتبع هذه المعدة بالكيلومترات فقط — لا يمكن إدخال قراءة الساعات", 400);
+      }
+      if (!kmApplicable && data.meterKm != null) {
+        fail("وضع تتبع هذه المعدة بالساعات فقط — لا يمكن إدخال قراءة الكيلومترات", 400);
+      }
+
+      const meterHours = hoursApplicable ? (data.meterHours ?? null) : null;
+      const meterKm = kmApplicable ? (data.meterKm ?? null) : null;
+      const baseline = meterHours != null || meterKm != null;
+      const resetDate = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+
+      const created = await tx.equipment.create({
+        data: {
+          code,
+          name,
+          projectId: data.projectId,
+          sectorId,
+          categoryId: resolvedCategory?.id ?? null,
+          trackingMode: mode,
+          trackingModeOverridden: tracking.trackingModeOverridden,
+          trackingModeConfirmed: tracking.trackingModeConfirmed,
+          hasOdometer: mode !== "HOURS",
+        },
+        include: equipmentInclude,
+      });
+
+      await recordAssignment(
+        {
+          equipmentId: created.id,
+          projectId: data.projectId,
+          sectorId,
+          projectSectorId,
+          sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+          sourceReference: `registration:user:${userId}`,
+          at: created.createdAt,
+        },
+        tx
+      );
+
+      let reset = null;
+      if (baseline) {
+        reset = await tx.meterReset.create({
+          data: {
+            equipmentId: created.id,
+            date: resetDate,
+            hours: meterHours,
+            km: meterKm,
+            notes: "آخر قراءة للعداد عند إضافة المعدة",
+          },
+        });
+      }
+
+      return {
+        equipment: created,
+        meterReset: reset,
+        category: resolvedCategory,
+        categoryCreated: createdCategory,
+        trackingMode: mode,
+        hasBaseline: baseline,
+        baselineDate: resetDate,
+      };
     });
 
-    await recordAssignment(
-      {
-        equipmentId: created.id,
-        projectId: data.projectId,
-        sectorId,
-        projectSectorId,
-        sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
-        sourceReference: `registration:user:${userId}`,
-        at: created.createdAt,
-      },
-      tx
-    );
-
-    let reset = null;
-    if (hasBaseline) {
-      reset = await tx.meterReset.create({
-        data: {
-          equipmentId: created.id,
-          date: baselineDate,
-          hours,
-          km,
-          notes: "آخر قراءة للعداد عند إضافة المعدة",
-        },
-      });
-    }
-
-    return { equipment: created, meterReset: reset };
-  });
+  if (categoryCreated && category) {
+    await logAudit(userId, "EquipmentCategory", category.id, "CREATE", {
+      name: category.name,
+      defaultTrackingMode: category.defaultTrackingMode,
+      source: "equipment-register",
+    });
+  }
 
   await logAudit(userId, "Equipment", equipment.id, "CREATE", {
     code: equipment.code,
@@ -645,6 +692,7 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
     equipment,
     meterReset,
     baselineDate: hasBaseline ? baselineDate.toISOString().slice(0, 10) : null,
+    categoryCreated,
     assignment: {
       projectId: data.projectId,
       sectorId,

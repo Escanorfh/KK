@@ -51,6 +51,13 @@ export const registerEquipmentSchema = z.object({
     .min(1, "اسم المعدة مطلوب")
     .max(200, "اسم المعدة أطول من الحد المسموح"),
   categoryId: z.coerce.number().int().positive("فئة المعدة غير صحيحة").nullable().optional(),
+  /** خيار «أخرى»: اسم فئة جديدة تُضاف إلى قائمة الفئات وتُربط بالمعدة. */
+  newCategoryName: z
+    .string()
+    .trim()
+    .min(2, "اسم الفئة الجديدة قصير جدًا")
+    .max(120, "اسم الفئة الجديدة أطول من الحد المسموح")
+    .optional(),
   trackingMode: trackingModeSchema.optional(),
   trackingModeConfirmed: z.boolean().optional(),
   projectId: z.coerce
@@ -60,6 +67,9 @@ export const registerEquipmentSchema = z.object({
   sectorId: z.coerce.number().int().positive("القطاع غير صحيح").nullable().optional(),
   meterHours: optionalMeterReading.optional(),
   meterKm: optionalMeterReading.optional(),
+}).refine((v) => !(v.categoryId != null && v.newCategoryName), {
+  message: "اختر فئة موجودة أو أدخل اسم فئة جديدة — وليس الاثنين معًا",
+  path: ["newCategoryName"],
 });
 
 export const createCategorySchema = z.object({
