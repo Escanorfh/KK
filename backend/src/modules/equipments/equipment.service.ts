@@ -4,6 +4,7 @@ import { issueAttestation } from "../../utils/attestation";
 import { logAudit } from "../../utils/audit";
 import { ASSIGNMENT_SOURCES, activeProjectSectorId, listAssignments as listAssignmentHistory, recordAssignment, recordAssignmentSafe } from "../../utils/assignmentHistory";
 import { resolveTrackingSetup, UNCLASSIFIED_CATEGORY } from "./trackingMode";
+import { isKnownPrismaError } from "../../utils/prismaError";
 import { scopeOr } from "../../utils/scope";
 import { ensureSectorLink } from "../sectors/sector.service";
 import {
@@ -495,6 +496,30 @@ function assertMeterReading(value: number | null | undefined, label: string) {
 }
 
 /**
+ * هل جدول سجل التخصيصات جاهز في قاعدة البيانات الحالية؟
+ *
+ * الترحيلات اليدوية: `migrations-manual/2026-11-11-equipment-assignment-history.sql`.
+ * لو الجدول/الأعمدة لسه مااتطبّقتش في بيئة ما، فشل الكتابة جوه الـtransaction
+ * بيقتل الطلب كله برسالة 500 مبهمة. بنفحص مرة واحدة (استعلام فهرس فاضي)
+ * ونسجّل المعدة بدون تخصيص تاريخي، ونرجّع تنبيه واضح بدل ما نوقع الصفحة.
+ */
+async function assignmentHistoryReady(): Promise<boolean> {
+  try {
+    await prisma.equipmentAssignment.findFirst({ select: { id: true }, take: 1 });
+    return true;
+  } catch (err) {
+    if (isKnownPrismaError(err)) {
+      const code = (err as { code?: string }).code;
+      if (code === "P2021" || code === "P2022") {
+        console.warn(`EquipmentAssignment schema not ready (${code}) — skipping history row`);
+        return false;
+      }
+    }
+    throw err;
+  }
+}
+
+/**
  * تسجيل معدة جديدة مع تخصيصها الأولي وآخر قراءة للعداد (ROOT فقط في طبقة الراوت).
  *
  * - كل الكتابات (المعدة + التخصيص + نقطة بداية العداد) داخل Transaction واحدة.
@@ -503,6 +528,8 @@ function assertMeterReading(value: number | null | undefined, label: string) {
  * - آخر قراءة تُحفظ في MeterReset فقط، ولا تُنشئ DailyLog.
  * - القطاع يجب أن يكون مرتبطًا بالمشروع عبر ProjectSector نشط — لا رجوع
  *   لـ Sector.projectId ولا إنشاء/تفعيل ربط تلقائي.
+ * - لو جدول السجل غير موجود في البيئة: تُحفظ المعدة والعداد ويُرجع تنبيه واضح
+ *   (`assignmentRecorded: false`) بدل إسقاط الطلب كله بـ500.
  */
 export async function registerEquipment(data: RegisterEquipmentInput, userId: number) {
   const code = data.code.trim();
@@ -561,6 +588,8 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
     const prefix = codePrefix(code);
     prefixCategory = (prefix ? byPrefix.get(prefix) : undefined) ?? null;
   }
+
+  const assignmentReady = await assignmentHistoryReady();
 
   const { equipment, meterReset, category, categoryCreated, trackingMode, hasBaseline, baselineDate } =
     await prisma.$transaction(async (tx) => {
@@ -623,18 +652,20 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
         include: equipmentInclude,
       });
 
-      await recordAssignment(
-        {
-          equipmentId: created.id,
-          projectId: data.projectId,
-          sectorId,
-          projectSectorId,
-          sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
-          sourceReference: `registration:user:${userId}`,
-          at: created.createdAt,
-        },
-        tx
-      );
+      if (assignmentReady) {
+        await recordAssignment(
+          {
+            equipmentId: created.id,
+            projectId: data.projectId,
+            sectorId,
+            projectSectorId,
+            sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+            sourceReference: `registration:user:${userId}`,
+            at: created.createdAt,
+          },
+          tx
+        );
+      }
 
       let reset = null;
       if (baseline) {
@@ -693,13 +724,19 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
     meterReset,
     baselineDate: hasBaseline ? baselineDate.toISOString().slice(0, 10) : null,
     categoryCreated,
-    assignment: {
-      projectId: data.projectId,
-      sectorId,
-      projectSectorId,
-      effectiveFrom: equipment.createdAt,
-      sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
-    },
+    assignmentRecorded: assignmentReady,
+    assignmentWarning: assignmentReady
+      ? null
+      : "لم يُسجَّل التخصيص التاريخي: جدول سجل التخصيصات غير موجود في قاعدة البيانات — طبّق الترحيل اليدوي backend/prisma/migrations-manual/2026-11-11-equipment-assignment-history.sql",
+    assignment: assignmentReady
+      ? {
+          projectId: data.projectId,
+          sectorId,
+          projectSectorId,
+          effectiveFrom: equipment.createdAt,
+          sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
+        }
+      : null,
   };
 }
 

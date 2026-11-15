@@ -97,6 +97,14 @@ test("P2022 محفوظ: بنية القاعدة أقدم من الكود → 500
   assert.match(res.body.message ?? "", /migrations-manual/);
 });
 
+test("P2021: جدول غير موجود → 500 مع اسم الجدول وملف الترحيلات", () => {
+  const err = prismaError("P2021", { table: "ops.EquipmentAssignment" });
+  const res = invoke(err);
+  assert.equal(res.status, 500);
+  assert.match(res.body.message ?? "", /EquipmentAssignment/);
+  assert.match(res.body.message ?? "", /migrations-manual/);
+});
+
 test("خطأ اتصال قاعدة البيانات محفوظ → 503", () => {
   const err = Object.assign(new Error("Can't reach database server"), {
     name: "PrismaClientInitializationError",

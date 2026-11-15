@@ -34,6 +34,8 @@ let db: State;
 let transferCalls = 0;
 let dailyLogCalls = 0;
 let failAssignment = false;
+/** محاكاة بيئة الإنتاج اللي فيها جدول سجل التخصيصات لسه مااتعملش. */
+let assignmentTableMissing: string | null = null;
 
 function reset(): State {
   db = {
@@ -61,6 +63,7 @@ function reset(): State {
   transferCalls = 0;
   dailyLogCalls = 0;
   failAssignment = false;
+  assignmentTableMissing = null;
   return db;
 }
 
@@ -113,12 +116,22 @@ const prismaMock: any = {
     },
   },
   equipmentAssignment: {
-    findFirst: async ({ where }: any) =>
-      db.assignments.find(
-        (a) =>
-          a.equipmentId === where?.equipmentId &&
-          (where?.effectiveTo === null ? a.effectiveTo === null : true)
-      ) ?? null,
+    findFirst: async ({ where }: any) => {
+      if (assignmentTableMissing) {
+        throw Object.assign(new Error(`The table \`ops.EquipmentAssignment\` does not exist`), {
+          name: "PrismaClientKnownRequestError",
+          code: assignmentTableMissing,
+          meta: { table: "ops.EquipmentAssignment" },
+        });
+      }
+      return (
+        db.assignments.find(
+          (a) =>
+            a.equipmentId === where?.equipmentId &&
+            (where?.effectiveTo === null ? a.effectiveTo === null : true)
+        ) ?? null
+      );
+    },
     create: async ({ data }: any) => {
       if (failAssignment) throw new Error("assignment insert failed");
       const row = { id: ++db.seq.assignment, ...data };
@@ -387,6 +400,45 @@ test("فشل تسجيل EquipmentAssignment يرجّع كل العملية (tran
   assert.equal(db.equipments.length, 0, "المعدة ما اتحفظتش");
   assert.equal(db.assignments.length, 0);
   assert.equal(db.meterResets.length, 0);
+});
+
+test("جدول سجل التخصيصات غير موجود (P2021): المعدة والعداد يُحفظان مع تنبيه", async () => {
+  reset();
+  assignmentTableMissing = "P2021";
+  const { registerEquipment } = await service();
+
+  const result = await registerEquipment(baseInput(), 7);
+
+  assert.equal(db.equipments.length, 1, "المعدة اتحفظت رغم الجدول الناقص");
+  assert.equal(db.meterResets.length, 1, "قراءة العداد اتحفظت");
+  assert.equal(db.assignments.length, 0, "مافيش صف تخصيص تاريخي");
+  assert.equal(result.assignmentRecorded, false);
+  assert.equal(result.assignment, null);
+  assert.match(result.assignmentWarning ?? "", /equipment-assignment-history\.sql/);
+});
+
+test("عمود ناقص في سجل التخصيصات (P2022) يُعامل زي الجدول الناقص", async () => {
+  reset();
+  assignmentTableMissing = "P2022";
+  const { registerEquipment } = await service();
+
+  const result = await registerEquipment(baseInput(), 7);
+
+  assert.equal(db.equipments.length, 1);
+  assert.equal(db.assignments.length, 0);
+  assert.equal(result.assignmentRecorded, false);
+});
+
+test("لما سجل التخصيصات جاهز: assignmentRecorded = true بدون تحذير", async () => {
+  reset();
+  const { registerEquipment } = await service();
+
+  const result = await registerEquipment(baseInput(), 7);
+
+  assert.equal(db.assignments.length, 1);
+  assert.equal(result.assignmentRecorded, true);
+  assert.equal(result.assignmentWarning, null);
+  assert.ok(result.assignment);
 });
 
 /* ------------------------------ units ------------------------------ */

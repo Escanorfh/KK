@@ -364,6 +364,17 @@ export default function RegisterEquipmentPage() {
             </div>
           )}
 
+          {success.assignmentRecorded === false && (
+            <div className="mx-5 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              حُفظت المعدة وقراءة العداد، لكن لم يُسجَّل التخصيص التاريخي لأن جدول سجل
+              التخصيصات غير موجود في قاعدة البيانات. طبّق الملف:
+              <span className="mx-1 font-mono" dir="ltr">
+                backend/prisma/migrations-manual/2026-11-11-equipment-assignment-history.sql
+              </span>
+              ثم أعد إدخال المعدة لاحقًا عند الحاجة.
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50/60">
             <button
               type="button"

@@ -38,6 +38,9 @@ export interface RegisterEquipmentResponse {
   meterReset: MeterReset | null;
   baselineDate: string | null;
   categoryCreated?: boolean;
+  /** هل اتسجّل صف التخصيص التاريخي؟ false لو جدول السجل لسه مااتعملش في القاعدة. */
+  assignmentRecorded?: boolean;
+  assignmentWarning?: string | null;
   assignment: {
     projectId: number;
     sectorId: number | null;

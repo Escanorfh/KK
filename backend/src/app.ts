@@ -243,6 +243,20 @@ export function errorHandler(
     });
   }
 
+  // P2021 = الجدول نفسه غير موجود (ترحيل يدوي لسه مااتطبّقش على البيئة).
+  if (isKnownPrismaError(err) && err.code === "P2021") {
+    const meta = (err as { meta?: { table?: string; modelName?: string } }).meta;
+    const table = meta?.table ?? meta?.modelName ?? "";
+    const file = table.includes("EquipmentAssignment")
+      ? "backend/prisma/migrations-manual/2026-11-11-equipment-assignment-history.sql"
+      : "backend/prisma/migrations-manual";
+    return res.status(500).json({
+      message: `جدول قاعدة البيانات${
+        table ? ` «${table}»` : ""
+      } غير موجود — طبّق ملف الترحيل ${file}`,
+    });
+  }
+
   if (err.status && err.status !== 500) {
     return res.status(err.status).json({ message: err.message });
   }
