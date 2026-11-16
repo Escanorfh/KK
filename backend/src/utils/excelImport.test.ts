@@ -5,6 +5,7 @@ import {
   cellText,
   createMasterIndex,
   detectDailyLogColumns,
+  detectDailyLogEquipmentColumns,
   matchProjectId,
   matchSectorId,
   normHeader,
@@ -55,6 +56,71 @@ test("does not confuse a project code column with the project name", () => {
   assert.equal(layout.hasProject, true);
   // only a code column exists -> no warning (project is still detected)
   assert.equal(layout.warnings.filter((w) => w.includes("المشروع")).length, 0);
+});
+
+test("detects equipment code column and falls back to serial number", () => {
+  const withCode = detectDailyLogEquipmentColumns([
+    "م",
+    "كود المعدة",
+    "الصلاحية",
+    "التاريخ",
+    "المشروع:",
+    "القطاع",
+  ]);
+  assert.equal(withCode.keyIndex, 1);
+  assert.equal(withCode.keySource, "code");
+
+  const serialOnly = detectDailyLogEquipmentColumns(["الرقم التسلسلي", "التاريخ", "القطاع"]);
+  assert.equal(serialOnly.keyIndex, 0);
+  assert.equal(serialOnly.keySource, "serial");
+
+  const none = detectDailyLogEquipmentColumns(["التاريخ", "العداد"]);
+  assert.equal(none.keyIndex, null);
+  assert.equal(none.keySource, null);
+});
+
+test("detects project/sector/date on the real SOUTH MED day sheet merged header", () => {
+  const row3 = [
+    "م",
+    "كود المعدة",
+    "الصلاحية",
+    "ساعات التشغيل",
+    "عداد ساعات",
+    "عداد الكيلومترات",
+    "اسم السائق",
+    "",
+    "السولار",
+    "الانتاجية ",
+    "",
+    "ملاحظات",
+  ];
+  const row4 = [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "نهاري",
+    "ليلي",
+    "",
+    "عدد",
+    "النوع",
+    "",
+    "معدل تغيير الزيت\\الساعة",
+    "معدل تغيير زيت \\كيلو متر",
+    "المشروع:",
+    "التاريخ",
+    "القطاع",
+  ];
+  const width = Math.max(row3.length, row4.length);
+  const merged = Array.from({ length: width }, (_, i) => row3[i] || row4[i] || "");
+  const layout = detectDailyLogColumns(merged);
+  assert.equal(layout.projectNameIndex, 14);
+  assert.equal(layout.sectorIndex, 16);
+  assert.equal(layout.hasProject, true);
+  assert.equal(layout.hasSector, true);
+  assert.equal(merged[15], "التاريخ");
 });
 
 test("missing headers produce warnings and hasProject/hasSector false", () => {

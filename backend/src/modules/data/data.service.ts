@@ -8,6 +8,7 @@ import {
   buildImportedSnapshot,
   createMasterIndex,
   detectDailyLogColumns,
+  detectDailyLogEquipmentColumns,
   extractTitleProjectSector,
   makeColFinder,
   matchProjectId,
@@ -270,16 +271,40 @@ function locateLayout(rows: unknown[][], entity: Entity) {
     entity === "dailylogs" &&
     !headers.some((c) => norm(c) === "التاريخ" || norm(c) === "تاريخ")
   ) {
-    headers = headers.map((h, i) => (str(h) ? h : rows[hIdx + 1]?.[i] ?? ""));
+    // merge row hIdx + row hIdx+1 across the *widest* row, because the second
+    // header row often carries columns (المشروع/القطاع) beyond the first row.
+    const sub = rows[hIdx + 1] ?? [];
+    const width = Math.max(headers.length, sub.length);
+    headers = Array.from({ length: width }, (_, i) =>
+      str(headers[i]) ? headers[i] : sub[i] ?? ""
+    );
     dataStart = hIdx + 2;
   }
   return { headers, col: makeColFinder(headers), dataStart, hIdx };
 }
 
+/**
+ * Find an existing project by its normalized Arabic name, or create it.
+ * Normalization prevents "ساوثميد" / "ساوث ميد " from creating duplicates.
+ * A per-process cache keeps repeated 300-row imports from re-querying.
+ */
+const projectNameCache = new Map<string, number>();
 async function ensureProjectByName(name: string): Promise<number> {
-  const existing = await prisma.project.findFirst({ where: { name } });
-  if (existing) return existing.id;
-  return (await prisma.project.create({ data: { name } })).id;
+  const clean = name.trim();
+  const key = norm(clean);
+  if (!key) throw Object.assign(new Error("اسم المشروع مطلوب"), { status: 400 });
+
+  const cached = projectNameCache.get(key);
+  if (cached) return cached;
+
+  const looseKey = key.replace(/\s+/g, "");
+  const projects = await prisma.project.findMany({ select: { id: true, name: true } });
+  const hit = projects.find(
+    (p) => norm(p.name) === key || norm(p.name).replace(/\s+/g, "") === looseKey
+  );
+  const id = hit ? hit.id : (await prisma.project.create({ data: { name: clean } })).id;
+  projectNameCache.set(key, id);
+  return id;
 }
 
 async function ensureSector(projectId: number, name: string): Promise<number> {
@@ -287,7 +312,11 @@ async function ensureSector(projectId: number, name: string): Promise<number> {
   return ensureSectorLink(projectId, name);
 }
 
-async function resolveEquipmentBatch(codes: string[], cache: Map<string, number>) {
+async function resolveEquipmentBatch(
+  codes: string[],
+  cache: Map<string, number>,
+  names?: Map<string, string>
+) {
   const missing = [...new Set(codes.filter((c) => c && !cache.has(c)))];
   if (missing.length === 0) return;
   const found = await prisma.equipment.findMany({
@@ -297,9 +326,37 @@ async function resolveEquipmentBatch(codes: string[], cache: Map<string, number>
   for (const f of found) cache.set(f.code, f.id);
   for (const code of missing) {
     if (cache.has(code)) continue;
-    const eq = await prisma.equipment.create({ data: { code, name: code } });
+    // New equipment: keep the code as the key, use the serial number as the
+    // display name when the sheet provided one.
+    const name = names?.get(code)?.trim() || code;
+    const eq = await prisma.equipment.create({ data: { code, name } });
     cache.set(code, eq.id);
   }
+}
+
+/**
+ * Best-effort serial-number column when the header is a bare "م".
+ * A real row-number column stays small (1..N); asset serials are large.
+ */
+function guessSerialColumn(
+  headers: unknown[],
+  rows: unknown[][],
+  dataStart: number,
+  exclude: number | null
+): number | null {
+  const candidates = headers
+    .map((h, i) => ({ i, n: norm(h) }))
+    .filter(({ i, n }) => i !== exclude && (n === "م" || n === "م." || n === "مسلسل"))
+    .map(({ i }) => i);
+  for (const i of candidates) {
+    let hits = 0;
+    for (let r = dataStart; r < rows.length && hits < 3; r++) {
+      const v = Number(rows[r]?.[i]);
+      if (Number.isFinite(v) && v >= 100000) hits++;
+    }
+    if (hits >= 2) return i;
+  }
+  return null;
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -437,6 +494,8 @@ export async function importEntity(
   sheetName?: string,
   fileName?: string
 ): Promise<ImportResult> {
+  // Fresh master lookups for every import (projects may have been deleted since).
+  projectNameCache.clear();
   const sheets = sheetsFromBuffer(buffer);
   const chosen = pickSheet(entity, sheets, sheetName);
   const allRows = chosen.rows;
@@ -644,7 +703,14 @@ export async function importEntity(
     const all = await prisma.equipment.findMany({ where: { code: { in: codes } }, select: { id: true, code: true } });
     for (const e of all) eqCache.set(e.code, e.id);
   } else if (entity === "dailylogs") {
-    const cCode = col(["كود المعدة", "الكود"]);
+    // Equipment key: "كود المعدة" first, then the serial number as fallback.
+    const eqCols = detectDailyLogEquipmentColumns(headers);
+    const cCode = eqCols.keyIndex;
+    if (cCode == null) {
+      result.warnings.push(
+        "لم يتم العثور على عمود «كود المعدة» ولا «الرقم التسلسلي» — لن يمكن ربط السجلات بالمعدات."
+      );
+    }
     const cDate = col(["التاريخ", "تاريخ"]);
     const cEnd = col(["العداد النهاية", "عداد الساعات", "عداد ساعات", "الساعة"]);
     const cHours = col(["ساعات التشغيل", "الساعات"]);
@@ -662,6 +728,8 @@ export async function importEntity(
     const cProj = layout.projectNameIndex;
     const cProjCode = layout.projectCodeIndex;
     const cSec = layout.sectorIndex;
+    const serialIndex =
+      eqCols.serialIndex ?? guessSerialColumn(headers, allRows, dataStart, cCode);
     const effectiveLayout = {
       hasProject: layout.hasProject || !!titleVals.projectName,
       hasSector: layout.hasSector || !!titleVals.sectorName,
@@ -675,23 +743,85 @@ export async function importEntity(
       fail("الملف مفيهوش عمود «التاريخ» — ده ملف يومية أصلًا؟", 400);
     }
 
+    // Read the project/sector text for a row. The row wins; the sheet title is
+    // only a fallback (and for `day` sheets the title is often the only source).
+    const rowProjectName = (r: unknown[]) =>
+      cProj != null ? g(r, cProj) || titleVals.projectName || "" : titleVals.projectName || "";
+    const rowProjectCode = (r: unknown[]) => (cProjCode != null ? g(r, cProjCode) : "");
+    const rowSectorName = (r: unknown[]) =>
+      cSec != null ? g(r, cSec) || titleVals.sectorName || "" : titleVals.sectorName || "";
+
     // Master data is used for IDs only. It can never supply or replace the
     // Excel project/sector text.
-    const masterProjects = await prisma.project.findMany({
-      select: { id: true, code: true, name: true },
-    });
-    const masterSectorLinks = await prisma.projectSector.findMany({
-      where: { active: true },
-      select: { projectId: true, sectorId: true, sector: { select: { name: true } } },
-    });
-    const master = createMasterIndex(
-      masterProjects,
-      masterSectorLinks.map((l) => ({
-        projectId: l.projectId,
-        sectorId: l.sectorId,
-        sectorName: l.sector.name,
-      }))
+    const loadMaster = async () => {
+      const [projects, links] = await Promise.all([
+        prisma.project.findMany({ select: { id: true, code: true, name: true } }),
+        prisma.projectSector.findMany({
+          where: { active: true },
+          select: { projectId: true, sectorId: true, sector: { select: { name: true } } },
+        }),
+      ]);
+      return createMasterIndex(
+        projects,
+        links.map((l) => ({ projectId: l.projectId, sectorId: l.sectorId, sectorName: l.sector.name }))
+      );
+    };
+    let master = await loadMaster();
+
+    // ------------------------------------------------------------------
+    // Auto-provision master data from the uploaded day sheet:
+    //   - missing project names are created
+    //   - missing sectors are created and linked to their project
+    // This runs BEFORE snapshots are built so the imported logs get the
+    // resolved projectId/sectorId on the very first import.
+    // ------------------------------------------------------------------
+    const distinctProjects = new Map<string, { name: string; code: string }>();
+    const distinctSectors = new Map<string, { projectKey: string; name: string }>();
+    // Don't create junk master rows from placeholder text.
+    const PLACEHOLDER_NAMES = new Set(
+      ["غير محدد", "بدون", "بدون مشروع", "بدون قطاع", "غير معروف", "-"].map((v) => norm(v))
     );
+    for (let i = dataStart; i < allRows.length; i++) {
+      const r = allRows[i];
+      if (!r || r.every((c) => str(c) === "")) continue;
+      const projName = rowProjectName(r);
+      const projectKey = norm(projName);
+      if (!projName || PLACEHOLDER_NAMES.has(projectKey)) continue;
+      if (!distinctProjects.has(projectKey)) {
+        distinctProjects.set(projectKey, { name: projName, code: rowProjectCode(r) });
+      }
+      const secName = rowSectorName(r);
+      const sectorKey = norm(secName);
+      if (secName && !PLACEHOLDER_NAMES.has(sectorKey)) {
+        distinctSectors.set(`${projectKey}|${sectorKey}`, { projectKey, name: secName });
+      }
+    }
+
+    const projectIdByKey = new Map<string, number>();
+    let createdProjects = 0;
+    for (const [key, info] of distinctProjects) {
+      const matched = matchProjectId(master, info.name, info.code || null);
+      const id = matched ?? (await ensureProjectByName(info.name));
+      if (matched == null) createdProjects++;
+      projectIdByKey.set(key, id);
+    }
+    if (createdProjects > 0) master = await loadMaster();
+
+    let createdSectors = 0;
+    for (const info of distinctSectors.values()) {
+      const projectId = projectIdByKey.get(info.projectKey);
+      if (projectId == null) continue;
+      if (matchSectorId(master, projectId, info.name) != null) continue;
+      await ensureSector(projectId, info.name);
+      createdSectors++;
+    }
+    if (createdSectors > 0) master = await loadMaster();
+
+    if (createdProjects > 0 || createdSectors > 0) {
+      result.warnings.push(
+        `تم إنشاء ${createdProjects} مشروع و${createdSectors} قطاع تلقائيًا من ملف اليومية.`
+      );
+    }
 
     interface DlRow {
       rowNo: number;
@@ -711,6 +841,7 @@ export async function importEntity(
       } & Partial<DailyLogSnapshot>;
     }
     const parsed: DlRow[] = [];
+    const equipNameByCode = new Map<string, string>();
     for (let i = dataStart; i < allRows.length; i++) {
       const r = allRows[i];
       if (r.every((c) => str(c) === "")) continue;
@@ -729,11 +860,14 @@ export async function importEntity(
       // خلية الإنتاجية القديمة: رقم يعني عدد، وغير الرقمي يعني النوع
       const prodIsCount = prodCountCell == null && prodNumber != null && Number.isFinite(prodNumber);
 
-      const projNameText =
-        cProj != null ? g(r, cProj) : titleVals.projectName || "";
-      const projCodeText = cProjCode != null ? g(r, cProjCode) : "";
-      const secNameText = cSec != null ? g(r, cSec) : titleVals.sectorName || "";
-      const projectId = matchProjectId(master, projNameText || null, projCodeText || null);
+      const projNameText = rowProjectName(r);
+      const projCodeText = rowProjectCode(r);
+      const secNameText = rowSectorName(r);
+      const serialText = serialIndex != null ? g(r, serialIndex) : "";
+      if (serialText) equipNameByCode.set(code, serialText);
+      const projectId =
+        projectIdByKey.get(norm(projNameText)) ??
+        matchProjectId(master, projNameText || null, projCodeText || null);
       const sectorId = matchSectorId(master, projectId, secNameText || null);
       const snapshot = buildImportedSnapshot(
         { projectName: projNameText, projectCode: projCodeText, sectorName: secNameText },
@@ -763,7 +897,8 @@ export async function importEntity(
 
     await resolveEquipmentBatch(
       parsed.map((p) => p.code),
-      eqCache
+      eqCache,
+      equipNameByCode
     );
     for (const p of parsed) rememberMeta(p.code, p.projName, p.secName);
 
@@ -1190,6 +1325,7 @@ const CLEARABLE: Record<Exclude<Entity, "users">, () => Promise<number>> = {
 
 export async function clearEntity(entity: Entity) {
   if (entity === "users") fail("لا يمكن مسح جدول المستخدمين", 400);
+  projectNameCache.clear();
   const count = await CLEARABLE[entity]();
   // سجلات الاستيراد الخاصة بهذا الجدول باتت بلا معنى بعد المسح الكامل
   await prisma.importLog.deleteMany({ where: { entity } });
@@ -1206,6 +1342,7 @@ export async function clearEntity(entity: Entity) {
  * so they must be removed before it. Users and equipment categories are kept.
  */
 export async function clearAll() {
+  projectNameCache.clear();
   const [
     workParts,
     repairParts,
@@ -1347,6 +1484,7 @@ export async function deleteImport(id: number): Promise<{ deleted: number; casca
       // حذف المشاريع بيمسح القطاعات التابعة لها — والمعدات المرتبطة تفقد الربط فقط (SetNull)
       cascadeDeleted = await prisma.sector.count({ where: { projectId: { in: ids } } });
       deleted = await doDelete((part) => prisma.project.deleteMany({ where: { id: { in: part } } }));
+      projectNameCache.clear();
     } else if (log.entity === "dailylogs") {
       deleted = await doDelete((part) => prisma.dailyLog.deleteMany({ where: { id: { in: part } } }));
     } else if (log.entity === "maintenance") {

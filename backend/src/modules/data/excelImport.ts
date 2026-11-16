@@ -27,6 +27,19 @@ export const DAILYLOG_PROJECT_CODE_ALIASES = [
 
 export const DAILYLOG_SECTOR_ALIASES = ["القطاع", "القطاع:", "اسم القطاع", "اسم القطاع:"];
 
+/** Equipment code column (the registry key). */
+export const DAILYLOG_EQUIPMENT_CODE_ALIASES = ["كود المعدة", "كود المعدة:", "الكود"];
+
+/** Serial number column — used as a fallback key when no code column exists. */
+export const DAILYLOG_SERIAL_ALIASES = [
+  "الرقم التسلسلي",
+  "الرقم التسلسلى",
+  "الرقم المسلسل",
+  "المسلسل",
+  "السيريال",
+  "serial",
+];
+
 /** Same normalization the Excel importer has always used for headers. */
 export function normHeader(v: unknown): string {
   return String(v ?? "")
@@ -137,6 +150,41 @@ export function detectDailyLogColumns(headers: unknown[]): DailyLogColumnLayout 
     hasProject: safeNameIndex != null || codeIndex != null,
     hasSector: sectorIndex != null,
     warnings,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Equipment key detection (code first, serial number as fallback)    */
+/* ------------------------------------------------------------------ */
+
+export interface DailyLogEquipmentLayout {
+  /** Column holding "كود المعدة" — the preferred equipment key. */
+  codeIndex: number | null;
+  /** Column holding the serial number — used only when there is no code column. */
+  serialIndex: number | null;
+  codeHeader: string | null;
+  serialHeader: string | null;
+  /** The column the importer must use as the equipment key. */
+  keyIndex: number | null;
+  keySource: "code" | "serial" | null;
+}
+
+export function detectDailyLogEquipmentColumns(headers: unknown[]): DailyLogEquipmentLayout {
+  const find = makeColFinder(headers);
+  const codeIndex = find(DAILYLOG_EQUIPMENT_CODE_ALIASES);
+  const serialIndex = find(DAILYLOG_SERIAL_ALIASES);
+  const keySource =
+    codeIndex != null ? "code" : serialIndex != null ? "serial" : null;
+  const keyIndex = codeIndex ?? serialIndex;
+  const headerAt = (i: number | null) =>
+    i == null ? null : String(headers[i] ?? "").trim() || null;
+  return {
+    codeIndex,
+    serialIndex,
+    codeHeader: headerAt(codeIndex),
+    serialHeader: headerAt(serialIndex),
+    keyIndex,
+    keySource,
   };
 }
 

@@ -91,7 +91,13 @@ export function readDailyLogPreview(rows: unknown[][]): DailyLogPreview | null {
   let headers = rows[hIdx];
   let dataStart = hIdx + 1;
   if (!headers.some((c) => normHeader(c) === "التاريخ" || normHeader(c) === "تاريخ")) {
-    headers = headers.map((h, i) => (String(h ?? "").trim() ? h : rows[hIdx + 1]?.[i] ?? ""));
+    // Merge both header rows across the widest one so columns that only exist
+    // in the second row (المشروع/القطاع) are not dropped.
+    const sub = rows[hIdx + 1] ?? [];
+    const width = Math.max(headers.length, sub.length);
+    headers = Array.from({ length: width }, (_, i) =>
+      String(headers[i] ?? "").trim() ? headers[i] : sub[i] ?? ""
+    );
     dataStart = hIdx + 2;
   }
   const norms = headers.map(normHeader);
