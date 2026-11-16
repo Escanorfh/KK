@@ -274,6 +274,18 @@ export function matchSectorId(
   return found ?? null;
 }
 
+/**
+ * A cell sitting where a value is expected but that is itself a column label
+ * (e.g. "نسبة تغيير الزيت" right after "القطاع" in the new day sheets).
+ * Such cells must never be captured as project/sector values.
+ */
+function looksLikeLabelValue(v: string): boolean {
+  const t = v.trim();
+  if (!t || t.endsWith(":") || t.endsWith("：")) return true;
+  const n = normHeader(t);
+  return /^(معدل|نسب[هة]|عداد|عدد|ا[خب]ر|التاريخ|المشروع|القطاع|كود|زيت)/.test(n);
+}
+
 export function extractTitleProjectSector(
   rows: unknown[][],
   headerRowIdx: number
@@ -288,7 +300,7 @@ export function extractTitleProjectSector(
       if ((n === "المشروع" || n === "المشروع:") && projectName == null) {
         for (let k = j + 1; k < r.length; k++) {
           const v = String(r[k] ?? "").trim();
-          if (v) {
+          if (v && !looksLikeLabelValue(v)) {
             projectName = v;
             break;
           }
@@ -297,7 +309,7 @@ export function extractTitleProjectSector(
       if ((n === "القطاع" || n === "القطاع:") && sectorName == null) {
         for (let k = j + 1; k < r.length; k++) {
           const v = String(r[k] ?? "").trim();
-          if (v) {
+          if (v && !looksLikeLabelValue(v)) {
             sectorName = v;
             break;
           }

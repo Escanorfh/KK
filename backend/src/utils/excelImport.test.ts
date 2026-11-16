@@ -6,6 +6,7 @@ import {
   createMasterIndex,
   detectDailyLogColumns,
   detectDailyLogEquipmentColumns,
+  extractTitleProjectSector,
   matchProjectId,
   matchSectorId,
   normHeader,
@@ -121,6 +122,84 @@ test("detects project/sector/date on the real SOUTH MED day sheet merged header"
   assert.equal(layout.hasProject, true);
   assert.equal(layout.hasSector, true);
   assert.equal(merged[15], "التاريخ");
+});
+
+test("new day layout: labels one row ABOVE the header still detect project/sector/date", () => {
+  // SOTH MED NEW day sheet: rows below the header are empty beyond col 10, so
+  // المشروع:/التاريخ/القطاع live in the row directly above the header row.
+  const merged = [
+    "م",
+    "كود المعدة",
+    "الصلاحية",
+    "ساعات التشغيل",
+    "عداد ساعات",
+    "عداد الكيلومترات",
+    "اسم السائق",
+    "ليلي",
+    "السولار",
+    "الانتاجية ",
+    "عدد",
+    "ملاحظات",
+    "معدل تغيير الزيت\\الساعة",
+    "معدل تغيير زيت \\كيلو متر",
+    "المشروع:",
+    "التاريخ",
+    "القطاع",
+  ];
+  const layout = detectDailyLogColumns(merged);
+  assert.equal(layout.projectNameIndex, 14);
+  assert.equal(layout.sectorIndex, 16);
+  assert.equal(layout.hasProject, true);
+  assert.equal(layout.hasSector, true);
+  assert.equal(merged[15], "التاريخ");
+});
+
+test("title extraction skips label-like values in the new day sheet", () => {
+  const rows: unknown[][] = [
+    [],
+    [],
+    [
+      "المشروع:",
+      "",
+      "ساوثميد",
+      "",
+      "",
+      "صيانة دورية",
+      "زيت محرك",
+      "",
+      "",
+      "التاريخ:",
+      46341,
+      "",
+      "معدل تغيير الزيت\\الساعة",
+      "معدل تغيير زيت \\كيلو متر",
+      "المشروع:",
+      "التاريخ",
+      "القطاع",
+      "نسبة تغيير الزيت",
+      "نسبه تغيير الزيت -كيلومتر",
+      "اَخر عداد تغيير زيت",
+      "عداد كيلومتر",
+    ],
+    [
+      "م",
+      "كود المعدة",
+      "الصلاحية",
+      "ساعات التشغيل",
+      "عداد ساعات",
+      "عداد الكيلومترات",
+      "اسم السائق",
+      "",
+      "السولار",
+      "الانتاجية ",
+      "",
+      "ملاحظات",
+    ],
+  ];
+  const title = extractTitleProjectSector(rows, 3);
+  assert.equal(title.projectName, "ساوثميد");
+  // Before the guard this wrongly returned "نسبة تغيير الزيت".
+  assert.equal(title.sectorName, null);
 });
 
 test("missing headers produce warnings and hasProject/hasSector false", () => {

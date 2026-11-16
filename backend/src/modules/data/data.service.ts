@@ -266,18 +266,28 @@ function locateLayout(rows: unknown[][], entity: Entity) {
   }
   let headers = rows[hIdx];
   let dataStart = hIdx + 1;
-  // شيت اليومي القديم: رأس ممتد على صفّين (التاريخ/الساعة/الكيلو/المشروع/القطاع في الصف التاني)
+  // شيت اليومي: الرأس ممكن يكون ممتد على صفوف حول صف الرأس الرئيسي.
+  // - الصف اللي تحت (نهاري/ليلي/عدد/النوع أو المشروع/القطاع في الملفات القديمة)
+  // - وصفوف فوقه (المشروع:/التاريخ/القطاع في الملفات الجديدة)
+  // الأولوية للصف الأقرب للبيانات، والأعمدة الفارغة في كل الصفوف تسيب فاضية.
   if (
     entity === "dailylogs" &&
     !headers.some((c) => norm(c) === "التاريخ" || norm(c) === "تاريخ")
   ) {
-    // merge row hIdx + row hIdx+1 across the *widest* row, because the second
-    // header row often carries columns (المشروع/القطاع) beyond the first row.
-    const sub = rows[hIdx + 1] ?? [];
-    const width = Math.max(headers.length, sub.length);
-    headers = Array.from({ length: width }, (_, i) =>
-      str(headers[i]) ? headers[i] : sub[i] ?? ""
+    const width = Math.max(
+      headers.length,
+      ...(hIdx + 1 < rows.length ? [rows[hIdx + 1].length] : []),
+      ...(hIdx - 1 >= 0 ? [rows[hIdx - 1].length] : []),
+      ...(hIdx - 2 >= 0 ? [rows[hIdx - 2].length] : [])
     );
+    headers = Array.from({ length: width }, (_, i) => {
+      if (str(headers[i])) return headers[i];
+      for (const j of [hIdx + 1, hIdx - 1, hIdx - 2]) {
+        const v = rows[j]?.[i];
+        if (v !== undefined && str(v)) return v;
+      }
+      return "";
+    });
     dataStart = hIdx + 2;
   }
   return { headers, col: makeColFinder(headers), dataStart, hIdx };
