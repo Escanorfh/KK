@@ -9,8 +9,7 @@ import { projectOptions } from "@/services/projects";
 import type { DailyLog, Project } from "@/types";
 
 interface ColFilters {
-  dateFrom: string;
-  dateTo: string;
+  serial: string;
   code: string;
   name: string;
   projectId: string;
@@ -30,8 +29,7 @@ interface ColFilters {
 }
 
 const emptyFilters: ColFilters = {
-  dateFrom: "",
-  dateTo: "",
+  serial: "",
   code: "",
   name: "",
   projectId: "",
@@ -79,13 +77,16 @@ export default function DataDayPage() {
       ["productivityType", "productivityType"],
       ["notes", "notes"],
       ["user", "user"],
-      ["dateFrom", "dateFrom"],
-      ["dateTo", "dateTo"],
       ["condition", "condition"],
     ];
     for (const [key, param] of map) {
       const v = strOrU(filters[key]);
       if (v !== undefined) params[param] = v;
+    }
+    // الرقم التسلسلي للمعدة — فلتر رقمي بالتطابق التام.
+    const serialNum = Number(filters.serial);
+    if (filters.serial.trim() !== "" && Number.isInteger(serialNum) && serialNum >= 0) {
+      params.serial = serialNum;
     }
     if (filters.projectId) params.projectId = filters.projectId;
     if (filters.sector) params.sector = filters.sector;
@@ -215,7 +216,7 @@ export default function DataDayPage() {
           <table className="w-full min-w-[1250px] border-collapse">
             <thead>
               <tr>
-                <th className={thCls}>التاريخ</th>
+                <th className={thCls}>الرقم التسلسلي</th>
                 <th className={thCls}>الكود</th>
                 <th className={thCls}>اسم المعدة</th>
                 <th className={thCls}>المشروع</th>
@@ -232,24 +233,15 @@ export default function DataDayPage() {
               </tr>
               <tr>
                 <td className={tfCls}>
-                  <div className="flex gap-1">
-                    <input
-                      type="date"
-                      dir="ltr"
-                      value={filters.dateFrom}
-                      onChange={(e) => setF("dateFrom", e.target.value)}
-                      className={fInput}
-                      title="من تاريخ"
-                    />
-                    <input
-                      type="date"
-                      dir="ltr"
-                      value={filters.dateTo}
-                      onChange={(e) => setF("dateTo", e.target.value)}
-                      className={fInput}
-                      title="إلى تاريخ"
-                    />
-                  </div>
+                  <input
+                    dir="ltr"
+                    inputMode="numeric"
+                    value={filters.serial}
+                    onChange={(e) => setF("serial", e.target.value.replace(/[^\d]/g, ""))}
+                    placeholder="بحث..."
+                    className={fInput}
+                    title="الرقم التسلسلي للمعدة"
+                  />
                 </td>
                 <td className={tfCls}>
                   <input
@@ -363,7 +355,7 @@ export default function DataDayPage() {
                     className="hover:bg-primary-50/50 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_41px]"
                   >
                     <td className={cn(tdCls, "font-mono text-xs")} dir="ltr">
-                      {rec.date.slice(0, 10)}
+                      {rec.equipment.serialNumber ?? <span className="text-slate-300">—</span>}
                     </td>
                     <td className={cn(tdCls, "font-mono text-primary-700 font-semibold")} dir="ltr">
                       {rec.equipment.code}

@@ -62,6 +62,8 @@ export interface Equipment {
   id: number;
   code: string;
   name: string;
+  /** رقم تسلسلي مولّد تلقائيًا = كود المشروع × 1,000,000 + عدّاد المشروع. */
+  serialNumber?: number | null;
   projectId?: number | null;
   sectorId?: number | null;
   categoryId?: number | null;
@@ -99,6 +101,7 @@ export interface DailyLog {
     id: number;
     code: string;
     name: string;
+    serialNumber?: number | null;
     trackingMode: TrackingMode;
     project?: { id: number; code?: string | null; name: string } | null;
     sector?: { id: number; name: string } | null;

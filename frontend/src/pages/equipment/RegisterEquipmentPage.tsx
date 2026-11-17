@@ -24,7 +24,9 @@ import type { EquipmentCategory, TrackingMode } from "@/types";
 import {
   listCategories,
   registerEquipment,
+  nextSerial,
   type RegisterEquipmentResponse,
+  type NextSerialResponse,
 } from "@/services/equipments";
 import { listSectors, projectOptions } from "@/services/projects";
 
@@ -136,6 +138,9 @@ export default function RegisterEquipmentPage() {
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState<RegisterEquipmentResponse | null>(null);
+  /** الرقم التسلسلي القادم للمشروع المختار — يتولد تلقائيًا ولا يُكتب يدويًا. */
+  const [serial, setSerial] = useState<NextSerialResponse | null>(null);
+  const [loadingSerial, setLoadingSerial] = useState(false);
 
   const hoursApplicable = trackingModeAppliesHours(trackingMode);
   const kmApplicable = trackingModeAppliesKm(trackingMode);
@@ -166,12 +171,28 @@ export default function RegisterEquipmentPage() {
   useEffect(() => {
     setSectorId("");
     setSectors([]);
+    setSerial(null);
 
     if (projectId === "") return;
 
     const pid = Number(projectId);
     let cancelled = false;
     setLoadingSectors(true);
+
+    // الرقم التسلسلي القادم — عرض فقط، يتحدد نهائيًا على الخادم عند الحفظ.
+    setLoadingSerial(true);
+    nextSerial(pid)
+      .then((res) => {
+        if (cancelled) return;
+        setSerial(res);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSerial(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSerial(false);
+      });
 
     listSectors(pid)
       .then((rows) => {
@@ -336,6 +357,11 @@ export default function RegisterEquipmentPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 p-5">
             <InfoRow label="كود المعدة" value={success.equipment.code} mono />
+            <InfoRow
+              label="الرقم التسلسلي"
+              value={success.serialNumber != null ? String(success.serialNumber) : "—"}
+              mono
+            />
             <InfoRow label="اسم المعدة" value={success.equipment.name} />
             <InfoRow label="المشروع" value={success.equipment.project?.name || "—"} />
             <InfoRow
@@ -529,6 +555,30 @@ export default function RegisterEquipmentPage() {
                 </option>
               ))}
             </select>
+          </Field>
+
+          <Field
+            label="الرقم التسلسلي"
+            hint={
+              serial?.serialNumber == null && !loadingSerial
+                ? "غير متاح — كود هذا المشروع ليس رقميًا، ويظل الحفظ ممكنًا بدون رقم تسلسلي."
+                : "يتولد تلقائيًا: كود المشروع × 1,000,000 + العداد التسلسلي للمشروع، ولا يتكرر داخل نفس المشروع."
+            }
+          >
+            <input
+              value={
+                loadingSerial
+                  ? "..."
+                  : serial?.serialNumber != null
+                    ? String(serial.serialNumber)
+                    : ""
+              }
+              readOnly
+              dir="ltr"
+              placeholder={projectId === "" ? "اختر المشروع أولًا" : "—"}
+              className={cn(inputCls, "font-mono text-left bg-slate-50")}
+              disabled
+            />
           </Field>
 
           <Field

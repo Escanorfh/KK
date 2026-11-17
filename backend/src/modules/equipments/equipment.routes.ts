@@ -12,6 +12,7 @@ import {
   createMeterResetSchema,
   createCategorySchema,
   updateCategorySchema,
+  nextSerialQuerySchema,
 } from "./equipment.schemas";
 
 const router = Router();
@@ -43,6 +44,12 @@ router.get(
   equipmentController.trackingReview
 );
 router.get("/", validateQuery(listEquipmentQuerySchema), equipmentController.list);
+// الرقم التسلسلي القادم للمشروع — قبل مسارات /:id حتى لا تلتقط كـ id.
+router.get(
+  "/next-serial",
+  validateQuery(nextSerialQuerySchema),
+  equipmentController.nextSerial
+);
 // ROOT-only registration endpoint. Deliberately separate from POST "/" so the
 // permissions of the existing equipment pages/APIs stay unchanged.
 router.post(

@@ -36,6 +36,8 @@ export interface RegisterEquipmentPayload {
 export interface RegisterEquipmentResponse {
   equipment: Equipment & { createdAt?: string };
   meterReset: MeterReset | null;
+  /** الرقم التسلسلي المولّد = كود المشروع × 1,000,000 + عدّاد المشروع. */
+  serialNumber: number | null;
   baselineDate: string | null;
   categoryCreated?: boolean;
   /** هل اتسجّل صف التخصيص التاريخي؟ false لو جدول السجل لسه مااتعملش في القاعدة. */
@@ -56,6 +58,20 @@ export async function registerEquipment(payload: RegisterEquipmentPayload) {
     "/equipments/register",
     payload
   );
+  return data;
+}
+
+/** الرقم التسلسلي القادم للمشروع — يُعرض في صفحة التسجيل قبل الحفظ. */
+export interface NextSerialResponse {
+  serialNumber: number | null;
+  seq: number | null;
+  reason: "PROJECT_CODE_NOT_NUMERIC" | "SERIAL_LIMIT_REACHED" | null;
+}
+
+export async function nextSerial(projectId: number) {
+  const { data } = await api.get<NextSerialResponse>("/equipments/next-serial", {
+    params: { projectId },
+  });
   return data;
 }
 

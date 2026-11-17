@@ -69,6 +69,16 @@ export async function register(req: Request, res: Response, next: NextFunction) 
   }
 }
 
+export async function nextSerial(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { projectId } = (req as Request & { validatedQuery: { projectId: number } })
+      .validatedQuery;
+    res.json(await equipmentService.nextSerial(projectId));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const equipment = await equipmentService.update(Number(req.params.id), req.body, req.user!.id);

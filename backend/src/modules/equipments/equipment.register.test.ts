@@ -36,6 +36,8 @@ let dailyLogCalls = 0;
 let failAssignment = false;
 /** محاكاة بيئة الإنتاج اللي فيها جدول سجل التخصيصات لسه مااتعملش. */
 let assignmentTableMissing: string | null = null;
+/** محاكاة تنافس طلبين على نفس الرقم التسلسلي (قيد فريد P2002). */
+let duplicateSerial = false;
 
 function reset(): State {
   db = {
@@ -64,6 +66,7 @@ function reset(): State {
   dailyLogCalls = 0;
   failAssignment = false;
   assignmentTableMissing = null;
+  duplicateSerial = false;
   return db;
 }
 
@@ -105,7 +108,36 @@ const prismaMock: any = {
   equipment: {
     findUnique: async ({ where }: any) =>
       db.equipments.find((e) => e.code === where?.code) ?? null,
+    aggregate: async ({ where }: any) => {
+      const rows = db.equipments.filter(
+        (e) => where?.projectId == null || e.projectId === where.projectId
+      );
+      const max = rows.reduce<number | null>(
+        (acc, e) =>
+          e.serialNumber != null && (acc == null || e.serialNumber > acc) ? e.serialNumber : acc,
+        null
+      );
+      return { _max: { serialNumber: max } };
+    },
     create: async ({ data }: any) => {
+      if (duplicateSerial) {
+        throw Object.assign(new Error("unique constraint violation"), {
+          name: "PrismaClientKnownRequestError",
+          code: "P2002",
+          meta: { target: ["projectId", "serialNumber"] },
+        });
+      }
+      if (
+        db.equipments.some(
+          (e) => e.projectId === data.projectId && e.serialNumber === data.serialNumber
+        )
+      ) {
+        throw Object.assign(new Error("unique constraint violation"), {
+          name: "PrismaClientKnownRequestError",
+          code: "P2002",
+          meta: { target: ["projectId", "serialNumber"] },
+        });
+      }
       const row = {
         id: ++db.seq.equipment,
         createdAt: new Date(),
@@ -439,6 +471,72 @@ test("لما سجل التخصيصات جاهز: assignmentRecorded = true بد�
   assert.equal(result.assignmentRecorded, true);
   assert.equal(result.assignmentWarning, null);
   assert.ok(result.assignment);
+});
+
+/* --------------------------- الرقم التسلسلي --------------------------- */
+
+test("أول معدة في المشروع تحمل الرقم التسلسلي كود المشروع × 1,000,000 + 1", async () => {
+  reset();
+  const { registerEquipment } = await service();
+  const result = await registerEquipment(baseInput(), 7);
+
+  assert.equal(db.equipments[0].serialNumber, 100000001, "كود 100 → 100,000,001");
+  assert.equal(result.serialNumber, 100000001);
+});
+
+test("العداد يزيد داخل المشروع فقط: ثاني معدة في A = 2 وأول معدة في B = 1", async () => {
+  reset();
+  const { registerEquipment, nextSerial } = await service();
+
+  await registerEquipment(baseInput(), 7);
+  await registerEquipment({ ...baseInput(), code: "EX-106" }, 7);
+  const inB = await registerEquipment(
+    { ...baseInput(), code: "BX-201", projectId: 2, sectorId: 11 },
+    7
+  );
+
+  assert.equal(db.equipments.find((e) => e.code === "EX-105")?.serialNumber, 100000001);
+  assert.equal(db.equipments.find((e) => e.code === "EX-106")?.serialNumber, 100000002);
+  assert.equal(inB.serialNumber, 200000001, "المشروع B له عدّاد مستقل");
+
+  const next = await nextSerial(1);
+  assert.equal(next.serialNumber, 100000003);
+  assert.equal(next.seq, 3);
+});
+
+test("تنافس طلبين على نفس الرقم التسلسلي → 409 برسالة واضحة (بدون 500)", async () => {
+  reset();
+  duplicateSerial = true;
+  const { registerEquipment } = await service();
+
+  const err = await rejected(registerEquipment(baseInput(), 7), 409);
+  assert.match(err.message, /الرقم التسلسلي/);
+  assert.equal(db.equipments.length, 0);
+});
+
+test("كود مشروع غير رقمي → 400 مع رسالة توضح سبب استحالة التوليد", async () => {
+  reset();
+  db.projects.push({ id: 3, code: "AB", name: "مشروع ثالث" });
+  const { registerEquipment } = await service();
+
+  const err = await rejected(
+    registerEquipment({ ...baseInput(), projectId: 3, sectorId: null }, 7),
+    400
+  );
+  assert.match(err.message, /كود المشروع/);
+  assert.equal(db.equipments.length, 0);
+});
+
+test("nextSerial يرجع الرقم القادم قبل الحفظ ومشروع غير موجود → 404", async () => {
+  reset();
+  const { nextSerial } = await service();
+
+  const before = await nextSerial(1);
+  assert.equal(before.serialNumber, 100000001);
+  assert.equal(before.seq, 1);
+
+  const missing = await rejected(nextSerial(999), 404);
+  assert.match(missing.message, /المشروع غير موجود/);
 });
 
 /* ------------------------------ units ------------------------------ */

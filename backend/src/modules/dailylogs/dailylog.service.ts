@@ -12,6 +12,7 @@ const include = {
       id: true,
       code: true,
       name: true,
+      serialNumber: true,
       trackingMode: true,
       project: { select: { id: true, name: true } },
       sector: { select: { id: true, name: true } },
@@ -438,6 +439,8 @@ interface ListParams {
   date?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** الرقم التسلسلي للمعدة (فلتر عمود الرقم التسلسلي في عرض السجلات اليومية). */
+  serial?: number;
   equipmentId?: number;
   projectId?: number;
   sectorId?: number;
@@ -467,6 +470,7 @@ function buildWhere({
   date,
   dateFrom,
   dateTo,
+  serial,
   equipmentId,
   projectId,
   sectorId,
@@ -491,6 +495,7 @@ function buildWhere({
     });
   }
   if (equipmentId) and.push({ equipmentId });
+  if (serial != null) and.push({ equipment: { serialNumber: serial } });
   if (projectId) and.push({ projectId });
   if (sectorId) and.push({ sectorId });
   if (condition) and.push({ condition });
@@ -560,6 +565,7 @@ export async function list({
   date,
   dateFrom,
   dateTo,
+  serial,
   equipmentId,
   projectId,
   sectorId,
@@ -568,7 +574,17 @@ export async function list({
   page,
   pageSize,
 }: ListParams) {
-  const where = buildWhere({ q, date, dateFrom, dateTo, equipmentId, projectId, condition, scope });
+  const where = buildWhere({
+    q,
+    date,
+    dateFrom,
+    dateTo,
+    serial,
+    equipmentId,
+    projectId,
+    condition,
+    scope,
+  });
 
   const [data, total] = await Promise.all([
     prisma.dailyLog.findMany({

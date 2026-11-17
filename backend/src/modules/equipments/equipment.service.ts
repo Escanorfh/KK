@@ -545,10 +545,20 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
 
   const project = await prisma.project.findUnique({
     where: { id: data.projectId },
-    select: { id: true },
+    select: { id: true, code: true },
   });
   if (!project) {
     fail("المشروع غير موجود", 404);
+  }
+
+  // الرقم التسلسلي = كود المشروع الرقمي × 1,000,000 + عدّاد تسلسلي خاص بالمشروع.
+  // Int في Postgres محدود بـ 2^31-1، فكود المشروع لازم يفضل ≤ 2147.
+  const projectCodeNum = Number(project.code);
+  if (!Number.isInteger(projectCodeNum) || projectCodeNum < 0 || projectCodeNum > 2147) {
+    fail(
+      "كود المشروع يجب أن يكون رقمًا صحيحًا (0 إلى 2147) حتى يتولد الرقم التسلسلي — لا يمكن التسجيل بهذا المشروع",
+      400
+    );
   }
 
   const sectorId = data.sectorId ?? null;
@@ -591,8 +601,7 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
 
   const assignmentReady = await assignmentHistoryReady();
 
-  const { equipment, meterReset, category, categoryCreated, trackingMode, hasBaseline, baselineDate } =
-    await prisma.$transaction(async (tx) => {
+  const runRegistrationTx = async (tx: Prisma.TransactionClient) => {
       let resolvedCategory = existingCategory ?? prefixCategory;
       let createdCategory = false;
 
@@ -637,6 +646,18 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
       const baseline = meterHours != null || meterKm != null;
       const resetDate = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
 
+      // الرقم التسلسلي: أعلى رقم موجود للمشروع + 1 (أو أول رقم = كود المشروع × 1e6 + 1).
+      // القيد الفريد (projectId, serialNumber) في القاعدة يمنع التكرار حتى لو
+      // تنافس طلبان في نفس اللحظة — ونتعامل مع P2002 برسالة واضحة في الأعلى.
+      const maxSerialRow = await tx.equipment.aggregate({
+        where: { projectId: data.projectId },
+        _max: { serialNumber: true },
+      });
+      const serialNumber = (maxSerialRow._max.serialNumber ?? projectCodeNum * 1_000_000) + 1;
+      if (serialNumber - projectCodeNum * 1_000_000 > 999_999) {
+        fail("عدد المعدات المسجلة في هذا المشروع وصل للحد الأقصى للرقم التسلسلي", 400);
+      }
+
       const created = await tx.equipment.create({
         data: {
           code,
@@ -644,6 +665,7 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
           projectId: data.projectId,
           sectorId,
           categoryId: resolvedCategory?.id ?? null,
+          serialNumber,
           trackingMode: mode,
           trackingModeOverridden: tracking.trackingModeOverridden,
           trackingModeConfirmed: tracking.trackingModeConfirmed,
@@ -688,8 +710,25 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
         trackingMode: mode,
         hasBaseline: baseline,
         baselineDate: resetDate,
+        serialNumber: created.serialNumber,
       };
-    });
+  };
+
+  let txResult: Awaited<ReturnType<typeof runRegistrationTx>>;
+  try {
+    txResult = await prisma.$transaction(runRegistrationTx);
+  } catch (err) {
+    // تنافس طلبين على نفس الرقم التسلسلي → قيد فريد P2002 برسالة واضحة بدل 500.
+    if (isKnownPrismaError(err) && (err as { code?: string }).code === "P2002") {
+      fail(
+        "تعذّر توليد الرقم التسلسلي — سجل آخر أخذ نفس الرقم في نفس اللحظة، أعد المحاولة",
+        409
+      );
+    }
+    throw err;
+  }
+  const { equipment, meterReset, category, categoryCreated, trackingMode, hasBaseline, baselineDate, serialNumber } =
+    txResult;
 
   if (categoryCreated && category) {
     await logAudit(userId, "EquipmentCategory", category.id, "CREATE", {
@@ -702,6 +741,7 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
   await logAudit(userId, "Equipment", equipment.id, "CREATE", {
     code: equipment.code,
     name: equipment.name,
+    serialNumber,
     trackingMode,
     categoryId: category?.id ?? null,
     projectId: data.projectId,
@@ -722,6 +762,7 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
   return {
     equipment,
     meterReset,
+    serialNumber,
     baselineDate: hasBaseline ? baselineDate.toISOString().slice(0, 10) : null,
     categoryCreated,
     assignmentRecorded: assignmentReady,
@@ -737,6 +778,42 @@ export async function registerEquipment(data: RegisterEquipmentInput, userId: nu
           sourceSystem: ASSIGNMENT_SOURCES.EFMS_MANUAL,
         }
       : null,
+  };
+}
+
+/**
+ * الرقم التسلسلي القادم للمشروع (للعرض في صفحة التسجيل قبل الحفظ).
+ * نفس منطق التوليد داخل التسجيل: أعلى رقم موجود + 1، وإلا كود المشروع × 1e6 + 1.
+ * كود المشروع غير الرقمي → serialNumber = null مع سبب واضح للواجهة.
+ */
+export async function nextSerial(projectId: number) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, code: true },
+  });
+  if (!project) {
+    fail("المشروع غير موجود", 404);
+  }
+  const projectCodeNum = Number(project.code);
+  if (!Number.isInteger(projectCodeNum) || projectCodeNum < 0 || projectCodeNum > 2147) {
+    return {
+      serialNumber: null,
+      seq: null,
+      reason: "PROJECT_CODE_NOT_NUMERIC" as const,
+    };
+  }
+  const maxSerialRow = await prisma.equipment.aggregate({
+    where: { projectId },
+    _max: { serialNumber: true },
+  });
+  const serialNumber = (maxSerialRow._max.serialNumber ?? projectCodeNum * 1_000_000) + 1;
+  if (serialNumber - projectCodeNum * 1_000_000 > 999_999) {
+    return { serialNumber: null, seq: null, reason: "SERIAL_LIMIT_REACHED" as const };
+  }
+  return {
+    serialNumber,
+    seq: serialNumber - projectCodeNum * 1_000_000,
+    reason: null,
   };
 }
 

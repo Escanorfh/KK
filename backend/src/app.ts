@@ -236,10 +236,14 @@ export function errorHandler(
     const model = meta?.model ?? meta?.modelName ?? "";
     // Prisma بيبعته أحيانًا «Sector.managersRoomId» وأحيانًا اسم العمود بس مع اسم الموديل
     const column = rawColumn.includes(".") ? rawColumn : [model, rawColumn].filter(Boolean).join(".");
+    // كل عمود جديد ليه ملف ترحيل خاص بيه — نوجّه للملف الصح بدل ملف ثابت قديم.
+    const columnFile = column.includes("serialNumber")
+      ? "backend/prisma/migrations-manual/2026-11-17-equipment-serial-number.sql"
+      : SCHEMA_MIGRATION_FILE;
     return res.status(500).json({
       message: `بنية قاعدة البيانات أقدم من كود السيرفر${
         column ? ` — العمود «${column}» غير موجود` : ""
-      }؛ نفّذ ملف الترحيل ${SCHEMA_MIGRATION_FILE}`,
+      }؛ نفّذ ملف الترحيل ${columnFile}`,
     });
   }
 

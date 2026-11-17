@@ -42,6 +42,8 @@ export const listDailyLogQuerySchema = z.object({
   date: dateStr.optional(),
   dateFrom: dateStr.optional(),
   dateTo: dateStr.optional(),
+  /** الرقم التسلسلي للمعدة. */
+  serial: z.coerce.number().int().min(0).optional(),
   equipmentId: z.coerce.number().int().optional(),
   projectId: z.coerce.number().int().optional(),
   sectorId: z.coerce.number().int().optional(),

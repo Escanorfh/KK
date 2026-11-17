@@ -24,6 +24,14 @@ export const createEquipmentSchema = z.object({
 
 export const updateEquipmentSchema = createEquipmentSchema.partial();
 
+/** استعلام الرقم التسلسلي القادم للمشروع (لصفحة التسجيل). */
+export const nextSerialQuerySchema = z.object({
+  projectId: z.coerce
+    .number({ invalid_type_error: "المشروع غير صحيح" })
+    .int("المشروع غير صحيح")
+    .positive("المشروع غير صحيح"),
+});
+
 const optionalMeterReading = z.preprocess(
   (v) => (v === "" || v === undefined ? null : v),
   z
