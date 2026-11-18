@@ -103,13 +103,24 @@ export function readDailyLogPreview(rows: unknown[][]): DailyLogPreview | null {
   let headers = rows[hIdx];
   let dataStart = hIdx + 1;
   if (!headers.some((c) => normHeader(c) === "التاريخ" || normHeader(c) === "تاريخ")) {
-    // Merge both header rows across the widest one so columns that only exist
-    // in the second row (المشروع/القطاع) are not dropped.
-    const sub = rows[hIdx + 1] ?? [];
-    const width = Math.max(headers.length, sub.length);
-    headers = Array.from({ length: width }, (_, i) =>
-      String(headers[i] ?? "").trim() ? headers[i] : sub[i] ?? ""
+    // Same merge as the backend locateLayout: feed from all header rows around
+    // the main one — below (نهاري/ليلي/عدد/النوع or the old المشروع/القطاع),
+    // then above (المشروع:/التاريخ/القطاع in the newer day sheets). The row
+    // closest to the data wins, and the merge spans the widest row.
+    const width = Math.max(
+      headers.length,
+      ...(rows[hIdx + 1] ? [rows[hIdx + 1].length] : []),
+      ...(rows[hIdx - 1] ? [rows[hIdx - 1].length] : []),
+      ...(rows[hIdx - 2] ? [rows[hIdx - 2].length] : [])
     );
+    headers = Array.from({ length: width }, (_, i) => {
+      if (String(headers[i] ?? "").trim()) return headers[i];
+      for (const j of [hIdx + 1, hIdx - 1, hIdx - 2]) {
+        const v = rows[j]?.[i];
+        if (v !== undefined && String(v ?? "").trim()) return v;
+      }
+      return "";
+    });
     dataStart = hIdx + 2;
   }
   const norms = headers.map(normHeader);

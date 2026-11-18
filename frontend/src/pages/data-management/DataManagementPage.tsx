@@ -100,7 +100,8 @@ function pickDefaultSheet(wb: XLSX.WorkBook, entity: ImportEntity, sheets: strin
     );
     if (hIdx === -1) continue;
     const cells = new Set<string>();
-    for (const row of [rows[hIdx], rows[hIdx + 1]]) {
+    // الرؤوس ممكن تكون موزعة على الصفوف حوالين صف الرأس (فوق أو تحت)
+    for (const row of [rows[hIdx - 2], rows[hIdx - 1], rows[hIdx], rows[hIdx + 1]]) {
       if (!row) continue;
       for (const c of row) {
         const n = normH(c);
