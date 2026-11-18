@@ -7,6 +7,7 @@ import {
   detectDailyLogColumns,
   detectDailyLogEquipmentColumns,
   extractTitleProjectSector,
+  extractTitleDate,
   matchProjectId,
   matchSectorId,
   normHeader,
@@ -282,4 +283,27 @@ test("ambiguous master rows resolve to null instead of guessing", () => {
 test("normHeader normalizes Arabic variants", () => {
   assert.equal(normHeader("المشروع:"), "المشروع");
   assert.equal(normHeader("أإآ"), "ااا");
+});
+
+test("extractTitleDate reads the sheet-level date cell", () => {
+  const rows: unknown[][] = [
+    [],
+    ["المشروع:", "", "رأس التين", "", "صيانة دورية", "زيت محرك", "", "", "التاريخ:", 46343],
+    ["م", "كود المعدة", "الصلاحية"],
+  ];
+  assert.equal(extractTitleDate(rows, 2), 46343);
+});
+
+test("extractTitleDate ignores text labels beside the date header", () => {
+  const rows: unknown[][] = [
+    [],
+    ["المشروع:", "رأس التين", "التاريخ:", "القطاع", "المعدات"],
+    ["م", "كود المعدة", "التاريخ"],
+  ];
+  assert.equal(extractTitleDate(rows, 2), null);
+});
+
+test("extractTitleDate accepts dd/mm/yyyy text", () => {
+  const rows: unknown[][] = [[], ["التاريخ:", "17/11/2026"], ["م", "كود المعدة"]];
+  assert.equal(extractTitleDate(rows, 2), "17/11/2026");
 });

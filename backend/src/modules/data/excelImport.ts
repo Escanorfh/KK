@@ -320,6 +320,37 @@ export function extractTitleProjectSector(
   return { projectName, sectorName };
 }
 
+/** شكل القيمة اللي تنفع تكون تاريخ (سيريال إكسل أو نص dd/mm/yyyy). */
+function looksLikeDateValue(v: unknown): boolean {
+  if (typeof v === "number") return v > 30000 && v < 70000;
+  const s = String(v ?? "").trim();
+  if (!s) return false;
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s)) return true;
+  return /^\d{4}-\d{2}-\d{2}/.test(s);
+}
+
+/**
+ * تاريخ الشيت نفسه: خلية «التاريخ:» اللي فوق رأس الجدول (زي `day!J3:K3`).
+ *
+ * شيتات اليومية فيها تاريخ واحد للشيت كله، وصفوف البيانات قد تخرج من إكسل
+ * بخلية تاريخ فاضية (معادلة لسه ماتحسبتش / ماكرو مامَلّاش الصف). بدون
+ * هذا الاحتياطي يُسقط المستورد الصف بالكامل — ومعه المعدة نفسها.
+ */
+export function extractTitleDate(rows: unknown[][], headerRowIdx: number): unknown | null {
+  const limit = Math.max(0, headerRowIdx);
+  for (let i = 0; i <= limit; i++) {
+    const r = rows[i] || [];
+    for (let j = 0; j < r.length; j++) {
+      const n = normHeader(r[j]);
+      if (n !== "التاريخ" && n !== "التاريخ:") continue;
+      for (let k = j + 1; k < Math.min(r.length, j + 4); k++) {
+        if (looksLikeDateValue(r[k])) return r[k];
+      }
+    }
+  }
+  return null;
+}
+
 export interface DailyLogSnapshot {
   projectId: number | null;
   projectCode: string | null;

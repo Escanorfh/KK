@@ -10,6 +10,7 @@ import {
   detectDailyLogColumns,
   detectDailyLogEquipmentColumns,
   extractTitleProjectSector,
+  extractTitleDate,
   makeColFinder,
   matchProjectId,
   matchSectorId,
@@ -784,6 +785,8 @@ export async function importEntity(
     const layout = detectDailyLogColumns(headers);
     result.warnings.push(...layout.warnings);
     const titleVals = extractTitleProjectSector(allRows, hIdx);
+    // تاريخ الشيت (خلية «التاريخ:» فوق الجدول) — احتياطي للصفوف اللي خلية تاريخها فاضية
+    const titleDate = parseDate(extractTitleDate(allRows, hIdx));
     const cProj = layout.projectNameIndex;
     const cProjCode = layout.projectCodeIndex;
     const cSec = layout.sectorIndex;
@@ -906,12 +909,22 @@ export async function importEntity(
     const serialOwner = new Map<string, string>();
     /** كود المعدة → فترة تغيير زيت المحرك بالساعات كما هي في الشيت. */
     const oilHoursIntervalByCode = new Map<string, number>();
+    /** صفوف اتخطّت لعدم وجود تاريخ صالح — تُذكر أسماؤها في نتيجة الاستيراد. */
+    const skippedNoDate: string[] = [];
+    let titleDateUsed = 0;
     for (let i = dataStart; i < allRows.length; i++) {
       const r = allRows[i];
       if (r.every((c) => str(c) === "")) continue;
       const code = g(r, cCode);
-      const date = cDate != null ? parseDate(r[cDate]) : null;
+      const dateCell = cDate != null ? r[cDate] : "";
+      let date = parseDate(dateCell);
+      // خلية التاريخ فاضية (معادلة لسه ماتحسبتش) → نستخدم تاريخ الشيت نفسه
+      if (!date && titleDate && str(dateCell) === "") {
+        date = titleDate;
+        titleDateUsed++;
+      }
       if (!date || !code) {
+        if (code) skippedNoDate.push(code);
         pushErr(i + 1, !date ? "التاريخ غير صالح" : "كود المعدة مطلوب");
         continue;
       }
@@ -971,6 +984,19 @@ export async function importEntity(
           ...(snapshot ?? {}),
         },
       });
+    }
+
+    if (titleDateUsed > 0 && titleDate) {
+      result.warnings.push(
+        `تم استخدام تاريخ الشيت (${titleDate.toISOString().slice(0, 10)}) لـ ${titleDateUsed} صف خلية تاريخه فاضية.`
+      );
+    }
+    if (skippedNoDate.length > 0) {
+      result.warnings.push(
+        `معدات لم تُستورد لعدم وجود تاريخ صالح (لن تظهر في النظام): ${skippedNoDate
+          .slice(0, 15)
+          .join("، ")}${skippedNoDate.length > 15 ? "…" : ""}`
+      );
     }
 
     await resolveEquipmentBatch(
