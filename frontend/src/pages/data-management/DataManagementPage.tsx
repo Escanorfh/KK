@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import * as XLSX from "xlsx";
 import {
@@ -42,11 +42,19 @@ interface Stats {
   users: number;
 }
 
-interface SheetDialog {
-  entity: ImportEntity;
+/** ملف واحد جاهز للاستيراد داخل حوار اختيار الشيت. */
+interface SheetDialogEntry {
   file: File;
+  wb: XLSX.WorkBook;
   sheets: string[];
   chosen: string;
+}
+
+interface SheetDialog {
+  entity: ImportEntity;
+  entries: SheetDialogEntry[];
+  /** ملفات تعذر تحليلها في المتصفح — تُرسل للسيرفر بدون تحديد شيت. */
+  unparsed: File[];
 }
 
 interface ImportLogRow {
@@ -109,6 +117,61 @@ function pickDefaultSheet(wb: XLSX.WorkBook, entity: ImportEntity, sheets: strin
   return sheets[0];
 }
 
+/** قراءة ملف الاستيراد في المتصفح (CSV كنص، Excel كـ array buffer). */
+async function parseWorkbook(file: File): Promise<XLSX.WorkBook> {
+  if (/\.csv$/i.test(file.name)) return XLSX.read(await file.text(), { type: "string" });
+  return XLSX.read(await file.arrayBuffer(), { type: "array" });
+}
+
+/** معاينة أعمدة المشروع/القطاع لشيت day واحد داخل حوار الاستيراد. */
+function DailyLogPreviewBox({ entry }: { entry: SheetDialogEntry }) {
+  const preview = useMemo(() => {
+    const ws = entry.wb.Sheets[entry.chosen];
+    if (!ws) return null;
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
+    const p = readDailyLogPreview(rows);
+    if (!p) return null;
+    const titleVals = extractTitleProjectSector(rows, (p.dataStart ?? 1) - 1);
+    return { ...p, titleProject: titleVals.projectName, titleSector: titleVals.sectorName };
+  }, [entry.chosen, entry.wb]);
+  if (!preview) return null;
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2 text-[11px]">
+      <p className="font-bold text-slate-700">معاينة أعمدة المشروع/القطاع (Data Day)</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <span className="text-slate-500">عمود المشروع:</span>{" "}
+          <b className="text-slate-800">{preview.projectNameHeader || preview.projectCodeHeader || "—"}</b>
+          {preview.projectSamples.length > 0 && (
+            <div className="text-slate-400 mt-0.5">أمثلة: {preview.projectSamples.join("، ")}</div>
+          )}
+        </div>
+        <div>
+          <span className="text-slate-500">عمود القطاع:</span>{" "}
+          <b className="text-slate-800">{preview.sectorHeader || "—"}</b>
+          {preview.sectorSamples.length > 0 && (
+            <div className="text-slate-400 mt-0.5">أمثلة: {preview.sectorSamples.join("، ")}</div>
+          )}
+        </div>
+      </div>
+      {preview.titleProject && !preview.hasProject && (
+        <p className="text-slate-600">مشروع الشيت: <b>{preview.titleProject}</b> (سيُستخدم لجميع الصفوف)</p>
+      )}
+      {preview.titleSector && !preview.hasSector && (
+        <p className="text-slate-600">قطاع الشيت: <b>{preview.titleSector}</b> (سيُستخدم لجميع الصفوف)</p>
+      )}
+      <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-amber-800">
+        {preview.warnings.map((w: string, i: number) => (
+          <p key={i}>{w}</p>
+        ))}
+      </div>
+      {!preview.hasProject && !preview.hasSector && (
+        <p className="text-amber-700">لا توجد أعمدة مشروع/قطاع — ستبقى القيم غير محددة.</p>
+      )}
+    </div>
+  );
+}
+
 const ENTITY_CARDS: {
   entity: ImportEntity;
   title: string;
@@ -162,19 +225,6 @@ export default function DataManagementPage() {
   const [lastResult, setLastResult] = useState<{ entity: string; result: ImportResult } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [sheetDialog, setSheetDialog] = useState<SheetDialog | null>(null);
-  const [wbState, setWbState] = useState<XLSX.WorkBook | null>(null);
-  const [sheetPreview, setSheetPreview] = useState<any>(null);
-  useEffect(() => {
-    if (!sheetDialog || !wbState || sheetDialog.entity !== "dailylogs") {
-      setSheetPreview(null);
-      return;
-    }
-    const ws = wbState.Sheets[sheetDialog.chosen];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
-    const preview = readDailyLogPreview(rows);
-    const titleVals = extractTitleProjectSector(rows, (preview?.dataStart ?? 1) - 1);
-    setSheetPreview(preview ? { ...preview, titleProject: titleVals.projectName, titleSector: titleVals.sectorName } : null);
-  }, [sheetDialog?.chosen, wbState, sheetDialog?.entity]);
 
   const [imports, setImports] = useState<ImportLogRow[]>([]);
   const [importsError, setImportsError] = useState<string | null>(null);
@@ -256,7 +306,7 @@ export default function DataManagementPage() {
     }
   };
 
-  const doImport = async (entity: ImportEntity, file: File, sheet?: string) => {
+  const doImport = async (entity: ImportEntity, file: File, sheet?: string): Promise<ImportResult | null> => {
     setBusy(`import:${entity}`);
     try {
       const form = new FormData();
@@ -270,37 +320,86 @@ export default function DataManagementPage() {
       if (data.warnings?.length) toast(`تحذيرات: ${data.warnings.join(" | ")}`, { duration: 6000 });
       loadStats();
       loadImports();
+      return data;
     } catch (err) {
-      toast.error(getApiError(err));
+      toast.error(`${file.name}: ${getApiError(err)}`);
+      return null;
     } finally {
       setBusy(null);
     }
   };
 
+  /** استيراد دفعة ملفات بالتتابع — فشل ملف لا يوقف الباقي، وفي النهاية ملخص إجمالي. */
+  const runImports = async (entity: ImportEntity, queue: { file: File; sheet?: string }[]) => {
+    if (queue.length === 0) return;
+    let done = 0;
+    let failed = 0;
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const q of queue) {
+      const r = await doImport(entity, q.file, q.sheet);
+      if (r) {
+        done++;
+        created += r.created;
+        updated += r.updated;
+        skipped += r.skipped;
+      } else {
+        failed++;
+      }
+    }
+    if (queue.length > 1) {
+      if (done > 0) {
+        toast.success(
+          `ملخص الدفعة: نجح ${done} من ${queue.length} ملف — ${created} جديد، ${updated} تحديث، ${skipped} تخطي${
+            failed ? ` — فشل ${failed}` : ""
+          }`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(`فشل استيراد كل الملفات (${queue.length})`);
+      }
+    }
+  };
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     const entity = pendingEntity.current;
-    if (!file || !entity) return;
+    if (!files.length || !entity) return;
     setBusy(`import:${entity}`);
     try {
-      let wb: XLSX.WorkBook;
-      if (/\.csv$/i.test(file.name)) {
-        wb = XLSX.read(await file.text(), { type: "string" });
-      } else {
-        wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const entries: SheetDialogEntry[] = [];
+      const unparsed: File[] = [];
+      for (const file of files) {
+        try {
+          const wb = await parseWorkbook(file);
+          const sheets = wb.SheetNames;
+          const chosen = sheets.length > 1 ? pickDefaultSheet(wb, entity, sheets) : sheets[0];
+          entries.push({ file, wb, sheets, chosen });
+        } catch {
+          // نفس سلوك الملف الواحد: لو المتصفح عجز يحلل الملف نكلف السيرفر بالتحديد
+          unparsed.push(file);
+        }
       }
-      setWbState(wb);
-      const sheets = wb.SheetNames;
-      if (sheets.length > 1) {
-        setSheetDialog({ entity, file, sheets, chosen: pickDefaultSheet(wb, entity, sheets) });
-      } else if (entity === "dailylogs") {
-        setSheetDialog({ entity, file, sheets, chosen: sheets[0] });
-      } else {
-        await doImport(entity, file, sheets[0]);
+      if (unparsed.length) {
+        toast(`تعذر تحليل ${unparsed.length} ملف في المتصفح — سيجرب السيرفر تحديده: ${unparsed.map((f) => f.name).join("، ")}`, {
+          duration: 6000,
+        });
       }
-    } catch {
-      await doImport(entity, file);
+      if (!entries.length) {
+        if (unparsed.length) await runImports(entity, unparsed.map((file) => ({ file })));
+        return;
+      }
+      const needsDialog = entity === "dailylogs" || entries.some((en) => en.sheets.length > 1);
+      if (needsDialog) {
+        setSheetDialog({ entity, entries, unparsed });
+      } else {
+        await runImports(entity, [
+          ...entries.map((en) => ({ file: en.file, sheet: en.chosen })),
+          ...unparsed.map((file) => ({ file })),
+        ]);
+      }
     } finally {
       setBusy(null);
     }
@@ -387,6 +486,7 @@ export default function DataManagementPage() {
         ref={fileRef}
         type="file"
         accept=".xlsx,.xls,.xlsm,.csv"
+        multiple
         className="hidden"
         onChange={handleFile}
       />
@@ -394,8 +494,8 @@ export default function DataManagementPage() {
       <div>
         <h1 className="text-lg font-bold text-slate-800">إدارة البيانات</h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          استيراد وتصدير ملفات Excel (xlsx / xls / xlsm) و CSV لكل الجداول + مسح البيانات — لو الملف فيه شيتات
-          متعددة بتختار الشيت قبل الاستيراد — صلاحية ROOT فقط
+          استيراد وتصدير ملفات Excel (xlsx / xls / xlsm) و CSV لكل الجداول + مسح البيانات — تقدر تختار أكتر من ملف مرة
+          واحدة ولو الملف فيه شيتات متعددة بتختار الشيت قبل الاستيراد — صلاحية ROOT فقط
         </p>
       </div>
 
@@ -744,61 +844,45 @@ export default function DataManagementPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-              <Upload size={15} className="text-primary-600" /> اختر الشيت للاستيراد
+              <Upload size={15} className="text-primary-600" />
+              اختر الشيت للاستيراد
+              {sheetDialog.entries.length > 1 && (
+                <span className="text-primary-700">({sheetDialog.entries.length} ملفات)</span>
+              )}
             </h3>
-            <p className="text-[11px] text-slate-500 truncate" dir="ltr">
-              {sheetDialog.file.name}
-            </p>
-            <select
-              value={sheetDialog.chosen}
-              onChange={(e) => setSheetDialog({ ...sheetDialog, chosen: e.target.value })}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400"
-            >
-              {sheetDialog.sheets.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              الشيت المناسب للجدول ده متحدد تلقائيًا — لو عايز شيت تاني (مثلاً Sheet2 للسجل التاريخي القديم)
-              غيّره من القائمة واستورد كل شيت على حدة.
-            </p>
-            {sheetDialog.entity === "dailylogs" && sheetPreview && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2 text-[11px]">
-                <p className="font-bold text-slate-700">معاينة أعمدة المشروع/القطاع (Data Day)</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <span className="text-slate-500">عمود المشروع:</span>{" "}
-                    <b className="text-slate-800">{sheetPreview.projectNameHeader || sheetPreview.projectCodeHeader || "—"}</b>
-                    {sheetPreview.projectSamples.length > 0 && (
-                      <div className="text-slate-400 mt-0.5">أمثلة: {sheetPreview.projectSamples.join("، ")}</div>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-slate-500">عمود القطاع:</span>{" "}
-                    <b className="text-slate-800">{sheetPreview.sectorHeader || "—"}</b>
-                    {sheetPreview.sectorSamples.length > 0 && (
-                      <div className="text-slate-400 mt-0.5">أمثلة: {sheetPreview.sectorSamples.join("، ")}</div>
-                    )}
-                  </div>
-                </div>
-                {sheetPreview.titleProject && !sheetPreview.hasProject && (
-                  <p className="text-slate-600">مشروع الشيت: <b>{sheetPreview.titleProject}</b> (سيُستخدم لجميع الصفوف)</p>
-                )}
-                {sheetPreview.titleSector && !sheetPreview.hasSector && (
-                  <p className="text-slate-600">قطاع الشيت: <b>{sheetPreview.titleSector}</b> (سيُستخدم لجميع الصفوف)</p>
-                )}
-                  <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-amber-800">
-                    {sheetPreview.warnings.map((w: string, i: number) => (
-                      <p key={i}>{w}</p>
+            <div className={cn("space-y-3", sheetDialog.entries.length > 1 && "max-h-80 overflow-y-auto pl-1")}>
+              {sheetDialog.entries.map((en, i) => (
+                <div key={`${en.file.name}-${i}`} className="space-y-1.5">
+                  <p className="text-[11px] text-slate-500 truncate" dir="ltr">
+                    {sheetDialog.entries.length > 1 ? `${i + 1}. ` : ""}
+                    {en.file.name}
+                  </p>
+                  <select
+                    value={en.chosen}
+                    onChange={(e) =>
+                      setSheetDialog({
+                        ...sheetDialog,
+                        entries: sheetDialog.entries.map((x, xi) =>
+                          xi === i ? { ...x, chosen: e.target.value } : x
+                        ),
+                      })
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-400"
+                  >
+                    {en.sheets.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
                     ))}
-                  </div>
-                {!sheetPreview.hasProject && !sheetPreview.hasSector && (
-                  <p className="text-amber-700">لا توجد أعمدة مشروع/قطاع — ستبقى القيم غير محددة.</p>
-                )}
-              </div>
-            )}
+                  </select>
+                  {sheetDialog.entity === "dailylogs" && <DailyLogPreviewBox entry={en} />}
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              الشيت المناسب للجدول ده متحدد تلقائيًا لكل ملف — لو عايز شيت تاني (مثلاً Sheet2 للسجل التاريخي القديم)
+              غيّره من القائمة. الملفات بتُستورد بالتتابع وفشل ملف لا يوقف الباقي.
+            </p>
             <div className="flex justify-end gap-2 pt-1">
               <button
                 onClick={() => setSheetDialog(null)}
@@ -810,7 +894,10 @@ export default function DataManagementPage() {
                 onClick={() => {
                   const d = sheetDialog;
                   setSheetDialog(null);
-                  void doImport(d.entity, d.file, d.chosen);
+                  void runImports(d.entity, [
+                    ...d.entries.map((en) => ({ file: en.file, sheet: en.chosen })),
+                    ...d.unparsed.map((file) => ({ file })),
+                  ]);
                 }}
                 disabled={busy !== null}
                 className="flex items-center gap-1.5 text-xs font-bold rounded-lg bg-primary-600 text-white px-4 py-2 hover:bg-primary-700 transition-colors disabled:opacity-50"
@@ -820,7 +907,9 @@ export default function DataManagementPage() {
                 ) : (
                   <Upload size={14} />
                 )}
-                استيراد
+                {sheetDialog.entries.length + sheetDialog.unparsed.length > 1
+                  ? `استيراد الكل (${sheetDialog.entries.length + sheetDialog.unparsed.length})`
+                  : "استيراد"}
               </button>
             </div>
           </div>
