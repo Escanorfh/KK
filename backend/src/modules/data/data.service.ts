@@ -202,7 +202,8 @@ function sheetSignature(rows: unknown[][]) {
   const hIdx = findHeaderRow(rows);
   const cells = new Set<string>();
   if (hIdx !== -1) {
-    for (const row of [rows[hIdx], rows[hIdx + 1]]) {
+    // الرؤوس ممكن تكون موزعة على صفوف حول صف الرأس الرئيسي (فوق أو تحت)
+    for (const row of [rows[hIdx - 2], rows[hIdx - 1], rows[hIdx], rows[hIdx + 1]]) {
       if (!row) continue;
       for (const c of row) {
         const n = norm(c);
@@ -223,7 +224,9 @@ function sheetMatches(entity: Entity, rows: unknown[][]): boolean {
   const s = sheetSignature(rows);
   if (s.hIdx === -1) return false;
   if (entity === "dailylogs") return s.hasDate && !s.hasPart;
-  if (entity === "maintenance") return s.hasPart || s.hasWO;
+  // فورم «work» فيه نوع أمر الشغل والورشة لكنه طلب واحد مش جدول — لازم معاه
+  // عمود «التاريخ» فعليًا عشان يعتبر سجل أوامر شغل.
+  if (entity === "maintenance") return s.hasPart || (s.hasDate && s.hasWO);
   return false;
 }
 
@@ -532,10 +535,21 @@ export async function importEntity(
   // Fresh master lookups for every import (projects may have been deleted since).
   projectNameCache.clear();
   const sheets = sheetsFromBuffer(buffer);
-  const chosen = pickSheet(entity, sheets, sheetName);
+  let chosen = pickSheet(entity, sheets, sheetName);
+  // فورم «work» في ملفات الـ day الجديدة طلب صيانة واحد مش جدول — لو اتبعت
+  // (اختيار يدوي أو تلقائي) بنجرب شيت الصيانة الحقيقي في نفس الملف بدل الفشل.
+  let sheetNote: string | null = null;
+  if (entity === "maintenance" && !sheetMatches(entity, chosen.rows)) {
+    const alt = sheets.find((s) => s !== chosen && sheetMatches(entity, s.rows));
+    if (alt) {
+      sheetNote = `الشيت «${chosen.name}» فورم طلب صيانة واحد مش جدول أوامر شغل — تم استيراد «${alt.name}» (سجل الصيانة) بدلًا منه.`;
+      chosen = alt;
+    }
+  }
   const allRows = chosen.rows;
   const { headers, col, dataStart, hIdx } = locateLayout(allRows, entity);
   const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [], warnings: [] };
+  if (sheetNote) result.warnings.push(sheetNote);
   const eqCache = new Map<string, number>();
   // معرّفات السجلات اللي الاستيراد ده أنشأها — تُحفظ في سجل الاستيراد لحذفها لاحقًا
   const createdIds: number[] = [];
@@ -1146,7 +1160,12 @@ export async function importEntity(
         const cProj = col(["المشروع", "المشروع:"]);
         const cSec = col(["القطاع"]);
         if (cDate == null) {
-          fail("الملف مفيهوش عمود «التاريخ» — ده ملف صيانة أصلًا؟ (ارفع الملف في «المعدات» أو «اليومية»)", 400);
+          fail(
+            `الشيت «${chosen.name}» مش جدول أوامر شغل — مفيش عمود «التاريخ». الملف فيه الشيتات: ${sheets
+              .map((s) => s.name)
+              .join("، ")} — اختر شيت سجل الصيانة (زي Sheet3) من قائمة الشيتات.`,
+            400
+          );
         }
 
         const workOrderNo = gn(r, cWo);

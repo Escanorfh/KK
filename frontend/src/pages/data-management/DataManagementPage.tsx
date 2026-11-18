@@ -112,7 +112,11 @@ function pickDefaultSheet(wb: XLSX.WorkBook, entity: ImportEntity, sheets: strin
     const hasDate = cells.has("التاريخ") || cells.has("تاريخ");
     const hasPart = has("صنف");
     const hasWO = has("امر الشغل") || has("نوع الصيانه") || has("الورشه");
-    const ok = entity === "dailylogs" ? hasDate && !hasPart : hasPart || hasWO;
+    const ok =
+      entity === "dailylogs"
+        ? hasDate && !hasPart
+        : // فورم «work» فيه نوع أمر الشغل بس مش جدول — لازم عمود «التاريخ» فعلي معاه
+          hasPart || (hasDate && hasWO);
     if (ok) return name;
   }
   return sheets[0];
