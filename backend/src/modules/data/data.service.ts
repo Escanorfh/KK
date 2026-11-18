@@ -982,10 +982,8 @@ export async function importEntity(
     for (const p of parsed) rememberMeta(p.code, p.projName, p.secName);
 
     // مواءمة تنبيهات الزيت مع الشيت: عمود «معدل تغيير الزيت\الساعة» يصبح موعد
-    // صنف «زيت محرك» بالساعة. الشيت يحسب نسبته على ضعف هذا العمود
-    // (100 → 200 ساعة، 150 → 300)، فنستخدم نفس المعيار حتى تطابق نسبة
-    // السيستم النسبة التي يراها المشغل في الشيت.
-    const OIL_SHEET_FACTOR = 2;
+    // صنف «زيت محرك» بالساعة. الشيت يحسب النسبة = المستهلك ÷ المعدل — نفس معادلة
+    // السيستم بالظبط — فالفترة تُؤخذ كما هي.
     const OIL_SCHEDULE_NOTE = "فترة زيت المحرك مستوردة من شيت اليومية";
     let oilScheduleTouched = 0;
     if (oilHoursIntervalByCode.size > 0) {
@@ -1001,7 +999,7 @@ export async function importEntity(
         for (const code of codesWithInterval) {
           const equipmentId = eqCache.get(code)!;
           const raw = oilHoursIntervalByCode.get(code)!;
-          const interval = Math.round(raw * OIL_SHEET_FACTOR * 100) / 100;
+          const interval = Math.round(raw * 100) / 100;
           if (!(interval > 0)) continue;
           const ex = exOil.get(equipmentId);
           if (!ex) {
@@ -1039,7 +1037,7 @@ export async function importEntity(
     }
     if (oilScheduleTouched > 0) {
       result.warnings.push(
-        `تم ضبط فترة تغيير زيت المحرك لـ ${oilScheduleTouched} معدة من شيت اليومية (الفترة = ${OIL_SHEET_FACTOR}× عمود «معدل تغيير الزيت» حتى تطابق نسبة السيستم نسبة الشيت).`
+        `تم ضبط فترة تغيير زيت المحرك لـ ${oilScheduleTouched} معدة من شيت اليومية (الفترة = عمود «معدل تغيير الزيت» — نفس معادلة نسبة الشيت).`
       );
     }
 
