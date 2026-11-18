@@ -586,27 +586,50 @@ export async function importEntity(
     }
   };
   const applyEqMeta = async () => {
+    /** معدات مربوطة بمشروع مختلف عن الشيت — لا نغيّرها تلقائيًا لكن ننبّه. */
+    const differentProject: string[] = [];
+    const failed: string[] = [];
     for (const [code, meta] of eqMeta) {
       try {
         const eq = await prisma.equipment.findUnique({ where: { code } });
         if (!eq) continue;
         const projectId = await ensureProjectByName(meta.projName);
         const sectorId = meta.secName ? await ensureSector(projectId, meta.secName) : null;
+        if (eq.projectId && eq.projectId !== projectId) differentProject.push(code);
         const needs =
           (!eq.projectId && projectId) ||
           (!eq.sectorId && sectorId);
-        if (needs) {
+        if (!needs) continue;
+        const patch = {
+          ...(!eq.projectId ? { projectId } : {}),
+          ...(!eq.sectorId && sectorId ? { sectorId } : {}),
+        };
+        try {
+          await prisma.equipment.update({ where: { id: eq.id }, data: patch });
+        } catch (err) {
+          // تعارض فريد (غالبًا رقم تسلسلي مكرر داخل نفس المشروع): الأسوأ إن المعدة
+          // تفضل بلا مشروع وتختفي من كل الفلاتر — فنربط المشروع/القطاع ونسيب الرقم.
+          if ((err as { code?: string })?.code !== "P2002") throw err;
           await prisma.equipment.update({
             where: { id: eq.id },
-            data: {
-              ...(!eq.projectId ? { projectId } : {}),
-              ...(!eq.sectorId && sectorId ? { sectorId } : {}),
-            },
+            data: { ...patch, serialNumber: null },
           });
         }
       } catch {
-        /* تجاهل أخطاء الربط */
+        failed.push(code);
       }
+    }
+    if (differentProject.length > 0) {
+      result.warnings.push(
+        `معدات مسجلة بمشروع مختلف عن الشيت (لم تُنقل تلقائيًا): ${differentProject
+          .slice(0, 10)
+          .join("، ")}${differentProject.length > 10 ? "…" : ""} — لن تظهر عند فلترة التنبيهات بمشروع الشيت.`
+      );
+    }
+    if (failed.length > 0) {
+      result.warnings.push(
+        `تعذّر ربط مشروع/قطاع لبعض المعدات: ${failed.slice(0, 10).join("، ")}${failed.length > 10 ? "…" : ""}`
+      );
     }
   };
 
