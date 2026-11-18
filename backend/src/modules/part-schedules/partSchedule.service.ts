@@ -260,8 +260,21 @@ export function computeService(opts: {
   };
 }
 
-function reachedLimit(s: ServiceAlert) {
-  return s.status === "DUE" || s.status === "OVERDUE";
+/**
+ * آخر تغيير زيت معتمد للمعدة: أوامر الصيانة لو موجودة، أو العداد الوارد من
+ * شيت اليومية لو الأوامر مش مستوردة أو أقدم. الأحدث (بالمعادن) هو اللي يحسب.
+ */
+export function resolveOilBaseline(
+  history: { date: Date; meter: number | null } | null,
+  sheet: { meter: number } | null,
+  observedAt: Date | null
+): { date: Date; meter: number | null } | null {
+  if (!sheet) return history;
+  if (history && (history.meter ?? Number.NEGATIVE_INFINITY) >= sheet.meter) return history;
+  return { date: history?.date ?? observedAt ?? new Date(0), meter: sheet.meter };
+}
+
+function reachedLimit(s: ServiceAlert) {  return s.status === "DUE" || s.status === "OVERDUE";
 }
 
 function approachingLimit(s: ServiceAlert) {
@@ -586,13 +599,15 @@ export async function alerts(params: {
   const filterKmOverrides = new Map<number, number>();
   const hourSources = new Map<number, { date: Date; value: number }>();
   const kmSources = new Map<number, { date: Date; value: number }>();
+  /** آخر عداد تغيير زيت وارد من شيت اليومية (oilSchedules) — أساس احتياطي. */
+  const sheetOilBaseline = new Map<number, { meter: number }>();
   let lastOilHours = new Map<number, Baseline>();
   let lastOilKm = new Map<number, Baseline>();
   let lastFilter = new Map<number, Baseline>();
   let lastFilterKm = new Map<number, Baseline>();
 
   if (equipmentIds.length > 0) {
-    const [schedules, logs, kmReadings, orders, resets] = await Promise.all([
+    const [schedules, logs, kmReadings, orders, resets, oilSchedules] = await Promise.all([
       prisma.partSchedule.findMany({
         where: { equipmentId: { in: equipmentIds } },
         select: { equipmentId: true, partName: true, interval: true, unit: true },
@@ -627,6 +642,10 @@ export async function alerts(params: {
         where: { equipmentId: { in: equipmentIds } },
         select: { equipmentId: true, date: true, hours: true, km: true },
         orderBy: [{ date: "asc" }, { id: "asc" }],
+      }),
+      prisma.oilSchedule.findMany({
+        where: { equipmentId: { in: equipmentIds } },
+        select: { equipmentId: true, oilType: true, lastChangeMeter: true },
       }),
     ]);
 
@@ -690,6 +709,16 @@ export async function alerts(params: {
       orders,
       resets
     ));
+
+    // أساس الزيت الوارد من شيت اليومية (لو الأوامر مش مستوردة أو أقدم)
+    for (const s of oilSchedules) {
+      if (!isEngineOilPart(s.oilType)) continue;
+      if (s.lastChangeMeter == null) continue;
+      const cur = sheetOilBaseline.get(s.equipmentId);
+      if (!cur || s.lastChangeMeter > cur.meter) {
+        sheetOilBaseline.set(s.equipmentId, { meter: s.lastChangeMeter });
+      }
+    }
   }
 
   const rows: EquipmentAlert[] = equipment.map((eq) => {
@@ -716,7 +745,11 @@ export async function alerts(params: {
     let oil = computeService({
       interval: oilHourInterval ?? OIL_DEFAULT_INTERVAL,
       isDefault: oilHourInterval == null,
-      last: lastOilHours.get(eq.id) ?? null,
+      last: resolveOilBaseline(
+        lastOilHours.get(eq.id) ?? null,
+        sheetOilBaseline.get(eq.id) ?? null,
+        hourSources.get(eq.id)?.date ?? null
+      ),
       currentMeter,
     });
     let oilKm = computeService({

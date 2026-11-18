@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildServiceHistory,
   computeService,
+  resolveOilBaseline,
   resolveServiceStatus,
   resolveOverallStatus,
   resolveOilAlertState,
@@ -750,4 +751,30 @@ test("part and maintenance classification", () => {
   assert.equal(isPeriodicMaintenance("صيانة دوريه"), true);
   assert.equal(isPeriodicMaintenance("صيانة أعطال"), false);
   assert.equal(isPeriodicMaintenance(null), false);
+});
+
+test("resolveOilBaseline: sheet baseline used when the system has no history", () => {
+  const sheet = { meter: 8291 };
+  const picked = resolveOilBaseline(null, sheet, d("2026-11-17"));
+  assert.equal(picked?.meter, 8291);
+  assert.equal(picked?.date.toISOString().slice(0, 10), "2026-11-17");
+});
+
+test("resolveOilBaseline: sheet baseline wins when it is newer than history", () => {
+  const history = { date: d("2026-09-01"), meter: 8000 };
+  const sheet = { meter: 8291 };
+  const picked = resolveOilBaseline(history, sheet, d("2026-11-17"));
+  assert.equal(picked?.meter, 8291);
+});
+
+test("resolveOilBaseline: maintenance history wins when it is newer than the sheet", () => {
+  const history = { date: d("2026-11-17"), meter: 8400 };
+  const sheet = { meter: 8291 };
+  const picked = resolveOilBaseline(history, sheet, d("2026-11-17"));
+  assert.equal(picked?.meter, 8400);
+});
+
+test("resolveOilBaseline: without a sheet baseline the history is used unchanged", () => {
+  const history = { date: d("2026-11-05"), meter: 7647 };
+  assert.equal(resolveOilBaseline(history, null, null)?.meter, 7647);
 });

@@ -803,6 +803,14 @@ export async function importEntity(
       return i === -1 ? null : i;
     };
     const cOilIntervalHours = oilIntervalCol("hours");
+    // «اَخر عداد تغيير زيت» — أساس حساب التنبيه حتى لو مفيش أوامر صيانة مستوردة.
+    const cOilLastChange = (() => {
+      const i = headers.findIndex((h) => {
+        const n = norm(h);
+        return n.includes("زيت") && n.includes("عداد") && (n.includes("اخر") || n.includes("تغيير"));
+      });
+      return i === -1 ? null : i;
+    })();
     // Project/sector come ONLY from the Excel row. Detection is explicit so a
     // missing column produces a warning instead of mapping an unrelated column.
     const layout = detectDailyLogColumns(headers);
@@ -932,6 +940,8 @@ export async function importEntity(
     const serialOwner = new Map<string, string>();
     /** كود المعدة → فترة تغيير زيت المحرك بالساعات كما هي في الشيت. */
     const oilHoursIntervalByCode = new Map<string, number>();
+    /** كود المعدة → آخر عداد تغيير زيت كما هو في الشيت. */
+    const oilBaselineByCode = new Map<string, number>();
     /** صفوف اتخطّت لعدم وجود تاريخ صالح — تُذكر أسماؤها في نتيجة الاستيراد. */
     const skippedNoDate: string[] = [];
     let titleDateUsed = 0;
@@ -978,6 +988,10 @@ export async function importEntity(
       const oilHoursCell = cOilIntervalHours != null ? gn(r, cOilIntervalHours) : null;
       if (oilHoursCell != null && oilHoursCell > 0) {
         oilHoursIntervalByCode.set(code, oilHoursCell);
+      }
+      const oilLastCell = cOilLastChange != null ? gn(r, cOilLastChange) : null;
+      if (oilLastCell != null && oilLastCell > 0) {
+        oilBaselineByCode.set(code, oilLastCell);
       }
       const projectId =
         projectIdByKey.get(norm(projNameText)) ??
@@ -1087,6 +1101,54 @@ export async function importEntity(
     if (oilScheduleTouched > 0) {
       result.warnings.push(
         `تم ضبط فترة تغيير زيت المحرك لـ ${oilScheduleTouched} معدة من شيت اليومية (الفترة = عمود «معدل تغيير الزيت» — نفس معادلة نسبة الشيت).`
+      );
+    }
+
+    // أساس التنبيه من الشيت: «اَخر عداد تغيير زيت» بيتسجل كآخر تغيير معروف
+    // للمعدة، فيبقى التنبيه مطابق للشيت حتى قبل استيراد أوامر الصيانة.
+    // لو الأوامر المستوردة فيها تغيير أحدث، السيستم بيفضّل الأحدث.
+    const OIL_TYPE = "زيت محرك";
+    let oilBaselineTouched = 0;
+    if (oilBaselineByCode.size > 0) {
+      const codesWithBaseline = [...oilBaselineByCode.keys()].filter((c) => eqCache.has(c));
+      const ops: Promise<unknown>[] = [];
+      for (const code of codesWithBaseline) {
+        const equipmentId = eqCache.get(code)!;
+        const meter = oilBaselineByCode.get(code)!;
+        const interval = oilHoursIntervalByCode.get(code);
+        const nextDue = meter + (interval && interval > 0 ? interval : 150);
+        ops.push(
+          prisma.oilSchedule
+            .upsert({
+              where: { equipmentId_oilType: { equipmentId, oilType: OIL_TYPE } },
+              create: {
+                equipmentId,
+                oilType: OIL_TYPE,
+                lastChangeMeter: meter,
+                intervalHours: interval && interval > 0 ? interval : 150,
+                warningBeforeHours: 10,
+                nextDueMeter: nextDue,
+              },
+              update: {
+                lastChangeMeter: meter,
+                ...(interval && interval > 0
+                  ? { intervalHours: interval, nextDueMeter: nextDue }
+                  : {}),
+              },
+            })
+            .then(() => {
+              oilBaselineTouched++;
+            })
+            .catch(() => {
+              /* لا نكسر الاستيراد لو الرقم غلط */
+            })
+        );
+      }
+      for (const c of chunk(ops, 20)) await Promise.all(c);
+    }
+    if (oilBaselineTouched > 0) {
+      result.warnings.push(
+        `تم استيراد «آخر عداد تغيير زيت» لـ ${oilBaselineTouched} معدة من شيت اليومية (أساس تنبيهات الزيت).`
       );
     }
 
