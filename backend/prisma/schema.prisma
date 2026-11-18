@@ -256,8 +256,8 @@ model Equipment {
   /// Legacy field kept only for the tracking-mode migration; do not use in new logic.
   hasOdometer            Boolean            @default(true)
   /// رقم تسلسلي مولّد تلقائيًا عند تسجيل المعدة = كود المشروع × 1,000,000 + عدّاد
-  /// تسلسلي خاص بكل مشروع (أول معدة = 1). يُنشأ من مسار التسجيل فقط؛ المعدات
-  /// القديمة والمستوردة تبقى بدون رقم تسلسلي.
+  /// تسلسلي خاص بكل مشروع (أول معدة = 1). يُنشأ من مسار التسجيل، أو يُستورد من
+  /// عمود الرقم التسلسلي في شيت day عند الاستيراد (للمعدات اللي ملهاش رقم فقط).
   serialNumber           Int?
   project                Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
   sector                 Sector?            @relation(fields: [sectorId], references: [id], onDelete: SetNull)

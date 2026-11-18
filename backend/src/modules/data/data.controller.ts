@@ -49,7 +49,7 @@ export async function importData(req: Request, res: Response, next: NextFunction
     const sheet = typeof sheetRaw === "string" && sheetRaw.trim() ? sheetRaw.trim() : undefined;
     await wakeDb();
     const result = await withDbRetry(() =>
-      dataService.importEntity(entity, file.buffer, sheet, file.originalname)
+      dataService.importEntity(entity, file.buffer, sheet, file.originalname, req.user?.id)
     );
     res.json(result);
   } catch (err) {

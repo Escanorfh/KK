@@ -325,22 +325,46 @@ async function ensureSector(projectId: number, name: string): Promise<number> {
 async function resolveEquipmentBatch(
   codes: string[],
   cache: Map<string, number>,
-  names?: Map<string, string>
+  names?: Map<string, string>,
+  serials?: Map<string, number>
 ) {
   const missing = [...new Set(codes.filter((c) => c && !cache.has(c)))];
   if (missing.length === 0) return;
   const found = await prisma.equipment.findMany({
     where: { code: { in: missing } },
-    select: { id: true, code: true },
+    select: { id: true, code: true, serialNumber: true },
   });
-  for (const f of found) cache.set(f.code, f.id);
+  for (const f of found) {
+    cache.set(f.code, f.id);
+    // استيراد الرقم التسلسلي من شيت day للمعدات اللي ملهاش رقم —
+    // ومش بنغيّر رقم موجود (التسجيل هو مصدر الترقيم التلقائي).
+    const serial = serials?.get(f.code);
+    if (f.serialNumber == null && serial != null) {
+      try {
+        await prisma.equipment.update({ where: { id: f.id }, data: { serialNumber: serial } });
+      } catch (err) {
+        // تعارض الفريد (projectId, serialNumber) — نسيب الرقم فاضي بدل ما نكسر الاستيراد
+        if ((err as { code?: string })?.code !== "P2002") throw err;
+      }
+    }
+  }
   for (const code of missing) {
     if (cache.has(code)) continue;
     // New equipment: keep the code as the key, use the serial number as the
     // display name when the sheet provided one.
     const name = names?.get(code)?.trim() || code;
-    const eq = await prisma.equipment.create({ data: { code, name } });
-    cache.set(code, eq.id);
+    const serial = serials?.get(code);
+    try {
+      const eq = await prisma.equipment.create({
+        data: { code, name, ...(serial != null ? { serialNumber: serial } : {}) },
+      });
+      cache.set(code, eq.id);
+    } catch (err) {
+      if ((err as { code?: string })?.code !== "P2002") throw err;
+      // تعارض رقم تسلسلي داخل نفس المشروع — أنشئ المعدة بدون رقم
+      const eq = await prisma.equipment.create({ data: { code, name } });
+      cache.set(code, eq.id);
+    }
   }
 }
 
@@ -502,7 +526,8 @@ export async function importEntity(
   entity: Entity,
   buffer: Buffer,
   sheetName?: string,
-  fileName?: string
+  fileName?: string,
+  userId?: number
 ): Promise<ImportResult> {
   // Fresh master lookups for every import (projects may have been deleted since).
   projectNameCache.clear();
@@ -852,6 +877,9 @@ export async function importEntity(
     }
     const parsed: DlRow[] = [];
     const equipNameByCode = new Map<string, string>();
+    const equipSerialByCode = new Map<string, number>();
+    /** (مشروع|رقم تسلسلي) → كود المعدة — لمنع تكرار رقم داخل نفس المشروع. */
+    const serialOwner = new Map<string, string>();
     for (let i = dataStart; i < allRows.length; i++) {
       const r = allRows[i];
       if (r.every((c) => str(c) === "")) continue;
@@ -875,6 +903,16 @@ export async function importEntity(
       const secNameText = rowSectorName(r);
       const serialText = serialIndex != null ? g(r, serialIndex) : "";
       if (serialText) equipNameByCode.set(code, serialText);
+      // الرقم التسلسلي في الشيت بنفس صيغة الترقيم التلقائي (كود المشروع × مليون + تسلسل)
+      const serialNum = Number(serialText);
+      if (serialText && Number.isInteger(serialNum) && serialNum >= 100000) {
+        const serialKey = `${norm(projNameText)}|${serialNum}`;
+        const owner = serialOwner.get(serialKey);
+        if (owner == null || owner === code) {
+          serialOwner.set(serialKey, code);
+          equipSerialByCode.set(code, serialNum);
+        }
+      }
       const projectId =
         projectIdByKey.get(norm(projNameText)) ??
         matchProjectId(master, projNameText || null, projCodeText || null);
@@ -908,7 +946,8 @@ export async function importEntity(
     await resolveEquipmentBatch(
       parsed.map((p) => p.code),
       eqCache,
-      equipNameByCode
+      equipNameByCode,
+      equipSerialByCode
     );
     for (const p of parsed) rememberMeta(p.code, p.projName, p.secName);
 
@@ -939,12 +978,16 @@ export async function importEntity(
         sectorId: true,
         sectorName: true,
         contextSource: true,
+        userId: true,
       },
     });
     const exMap = new Map(existing.map((e) => [dayKey(e.date, e.equipmentId), e]));
 
     const same = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
+    // السجل المستورد بيتنسب للمستخدم اللي رفع الملف — فلو كان مسجل باسم
+    // مستخدم تاني أو بدون مستخدم (استيراد قديم) بيتحدّث لاسم الرافع.
     const unchanged = (ex: (typeof existing)[number], d: DlRow["data"]) =>
+      (userId == null || ex.userId === userId) &&
       same(ex.endMeter, d.endMeter) &&
       same(ex.operatingHours, d.operatingHours) &&
       same(ex.diesel, d.diesel) &&
@@ -988,7 +1031,12 @@ export async function importEntity(
 
     for (const c of chunk(creates, 500)) {
       const res = await prisma.dailyLog.createMany({
-        data: c.map((p) => ({ ...p.data, equipmentId: eqCache.get(p.code)! })),
+        // الاستيراد بيتعامل مع البيانات كأنها مدخلة من المستخدم اللي رفع الملف
+        data: c.map((p) => ({
+          ...p.data,
+          equipmentId: eqCache.get(p.code)!,
+          ...(userId ? { userId } : {}),
+        })),
         skipDuplicates: true,
       });
       result.created += res.count;
@@ -1005,7 +1053,10 @@ export async function importEntity(
     for (const c of chunk(updates, 100)) {
       await prisma.$transaction(
         c.map((u) =>
-          prisma.dailyLog.update({ where: { id: u.id }, data: updateData(u.data) })
+          prisma.dailyLog.update({
+            where: { id: u.id },
+            data: { ...updateData(u.data), ...(userId ? { userId } : {}) },
+          })
         )
       );
       result.updated += c.length;
