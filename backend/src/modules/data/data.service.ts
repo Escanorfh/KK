@@ -769,6 +769,16 @@ export async function importEntity(
     const cCond = col(["الصلاحية", "الحالة"]);
     const cCondNote = col(["ملاحظة الحالة"]);
     const cNotes = col(["ملاحظات"]);
+    // أعمدة «معدل تغيير الزيت» في شيت اليومية الجديد — تُحوَّل لمواعيد أصناف.
+    const oilIntervalCol = (want: "hours" | "km"): number | null => {
+      const i = headers.findIndex((h) => {
+        const n = norm(h);
+        if (!n.includes("معدل") || !n.includes("زيت")) return false;
+        return want === "hours" ? n.includes("ساع") : n.includes("كيلو");
+      });
+      return i === -1 ? null : i;
+    };
+    const cOilIntervalHours = oilIntervalCol("hours");
     // Project/sector come ONLY from the Excel row. Detection is explicit so a
     // missing column produces a warning instead of mapping an unrelated column.
     const layout = detectDailyLogColumns(headers);
@@ -894,6 +904,8 @@ export async function importEntity(
     const equipSerialByCode = new Map<string, number>();
     /** (مشروع|رقم تسلسلي) → كود المعدة — لمنع تكرار رقم داخل نفس المشروع. */
     const serialOwner = new Map<string, string>();
+    /** كود المعدة → فترة تغيير زيت المحرك بالساعات كما هي في الشيت. */
+    const oilHoursIntervalByCode = new Map<string, number>();
     for (let i = dataStart; i < allRows.length; i++) {
       const r = allRows[i];
       if (r.every((c) => str(c) === "")) continue;
@@ -926,6 +938,10 @@ export async function importEntity(
           serialOwner.set(serialKey, code);
           equipSerialByCode.set(code, serialNum);
         }
+      }
+      const oilHoursCell = cOilIntervalHours != null ? gn(r, cOilIntervalHours) : null;
+      if (oilHoursCell != null && oilHoursCell > 0) {
+        oilHoursIntervalByCode.set(code, oilHoursCell);
       }
       const projectId =
         projectIdByKey.get(norm(projNameText)) ??
@@ -964,6 +980,68 @@ export async function importEntity(
       equipSerialByCode
     );
     for (const p of parsed) rememberMeta(p.code, p.projName, p.secName);
+
+    // مواءمة تنبيهات الزيت مع الشيت: عمود «معدل تغيير الزيت\الساعة» يصبح موعد
+    // صنف «زيت محرك» بالساعة. الشيت يحسب نسبته على ضعف هذا العمود
+    // (100 → 200 ساعة، 150 → 300)، فنستخدم نفس المعيار حتى تطابق نسبة
+    // السيستم النسبة التي يراها المشغل في الشيت.
+    const OIL_SHEET_FACTOR = 2;
+    const OIL_SCHEDULE_NOTE = "فترة زيت المحرك مستوردة من شيت اليومية";
+    let oilScheduleTouched = 0;
+    if (oilHoursIntervalByCode.size > 0) {
+      const codesWithInterval = [...oilHoursIntervalByCode.keys()].filter((c) => eqCache.has(c));
+      const oilEqIds = [...new Set(codesWithInterval.map((c) => eqCache.get(c)!))];
+      if (oilEqIds.length > 0) {
+        const existingOil = await prisma.partSchedule.findMany({
+          where: { equipmentId: { in: oilEqIds }, partName: "زيت محرك" },
+          select: { id: true, equipmentId: true, interval: true, notes: true },
+        });
+        const exOil = new Map(existingOil.map((e) => [e.equipmentId, e]));
+        const ops: Promise<unknown>[] = [];
+        for (const code of codesWithInterval) {
+          const equipmentId = eqCache.get(code)!;
+          const raw = oilHoursIntervalByCode.get(code)!;
+          const interval = Math.round(raw * OIL_SHEET_FACTOR * 100) / 100;
+          if (!(interval > 0)) continue;
+          const ex = exOil.get(equipmentId);
+          if (!ex) {
+            ops.push(
+              prisma.partSchedule
+                .create({
+                  data: {
+                    equipmentId,
+                    partName: "زيت محرك",
+                    interval,
+                    unit: "ساعة",
+                    notes: OIL_SCHEDULE_NOTE,
+                  },
+                })
+                .then(() => {
+                  oilScheduleTouched++;
+                })
+                .catch(() => {
+                  // موعد مضاف من مسار آخر بنفس الاسم — لا نكتب فوقه
+                })
+            );
+          } else if (ex.notes === OIL_SCHEDULE_NOTE && ex.interval !== interval) {
+            ops.push(
+              prisma.partSchedule
+                .update({ where: { id: ex.id }, data: { interval } })
+                .then(() => {
+                  oilScheduleTouched++;
+                })
+                .catch(() => {})
+            );
+          }
+        }
+        for (const c of chunk(ops, 20)) await Promise.all(c);
+      }
+    }
+    if (oilScheduleTouched > 0) {
+      result.warnings.push(
+        `تم ضبط فترة تغيير زيت المحرك لـ ${oilScheduleTouched} معدة من شيت اليومية (الفترة = ${OIL_SHEET_FACTOR}× عمود «معدل تغيير الزيت» حتى تطابق نسبة السيستم نسبة الشيت).`
+      );
+    }
 
     // آخر صف داخل الملف بنفس (التاريخ + المعدة) بغلب
     const byKey = new Map<string, DlRow>();
