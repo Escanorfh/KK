@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import {
   ArrowRight,
@@ -53,6 +53,7 @@ interface Column {
 
 const COLUMNS: Record<ReviewEntity, Column[]> = {
   dailylog: [
+    { key: "equipmentCode", label: "كود المعدة", mono: true, noEdit: true },
     { key: "date", label: "التاريخ", mono: true },
     { key: "endMeter", label: "قراءة العداد", mono: true },
     { key: "operatingHours", label: "ساعات التشغيل", mono: true },
@@ -63,6 +64,7 @@ const COLUMNS: Record<ReviewEntity, Column[]> = {
     { key: "notes", label: "ملاحظات" },
   ],
   maintenance: [
+    { key: "equipmentCode", label: "كود المعدة", mono: true, noEdit: true },
     { key: "date", label: "التاريخ", mono: true },
     { key: "endDate", label: "تاريخ الانتهاء", mono: true },
     { key: "workType", label: "نوع العمل" },
@@ -76,6 +78,7 @@ const COLUMNS: Record<ReviewEntity, Column[]> = {
     { key: "notes", label: "ملاحظات" },
   ],
   repairorder: [
+    { key: "equipmentCode", label: "كود المعدة", mono: true, noEdit: true },
     { key: "requestNo", label: "رقم الطلب", mono: true, noEdit: true },
     { key: "type", label: "النوع", noEdit: true },
     { key: "entryDate", label: "تاريخ الدخول", mono: true },
@@ -111,6 +114,33 @@ function formatValue(value: unknown, mono?: boolean) {
   if (typeof value === "boolean") return value ? "نعم" : "لا";
   const text = String(value);
   if (mono && /^\d{4}-\d{2}-\d{2}T/.test(text)) return text.slice(0, 10);
+  return text;
+}
+
+/**
+ * كود المعدة بيتخزن في سياق الطلب (ReviewRequest.equipmentCode) مش جوّه submittedData،
+ * فبنقرأه من هناك أولًا مع fallback للبيانات القديمة اللي كانت بتبعته جوّه الـ payload.
+ */
+function cellValue(review: ReviewRequest, data: Record<string, unknown>, key: string): unknown {
+  if (key === "equipmentCode") {
+    return review.equipmentCode ?? data.equipmentCode ?? data.equipmentId ?? null;
+  }
+  return data[key];
+}
+
+function toInput(value: unknown) {
+  if (value == null) return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/** يحافظ على نوع القيمة الأصلية (رقم يفضل رقم) بدل ما كل حاجة تبقى نص. */
+function coerceValue(original: unknown, text: string) {
+  if (text === "") return null;
+  if (typeof original === "number") {
+    const n = Number(text);
+    return Number.isFinite(n) ? n : text;
+  }
   return text;
 }
 
@@ -215,6 +245,9 @@ export default function ReviewPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [editData, setEditData] = useState<Record<string, unknown>>({});
   const [editing, setEditing] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ rowId: number; key: string } | null>(null);
+  const [cellDraft, setCellDraft] = useState("");
+  const cellInputRef = useRef<HTMLInputElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState<string | null>(null);
 
@@ -248,9 +281,12 @@ export default function ReviewPage() {
     setOpenedKey(g.key);
     setActiveId(first?.id ?? null);
     setEditing(false);
+    setEditingCell(null);
+    // initializing synchronously avoids empty cells while the detail request is in flight
+    setEditData({ ...((first?.reviewedData ?? first?.submittedData ?? {}) as Record<string, unknown>) });
     try {
       const full = await getReview(first.id);
-      setEditData({ ...(full.reviewedData ?? full.submittedData) });
+      setEditData({ ...((full.reviewedData ?? full.submittedData) as Record<string, unknown>) });
     } catch (err) {
       toast.error(getApiError(err));
     }
@@ -259,9 +295,11 @@ export default function ReviewPage() {
   const chooseRow = async (review: ReviewRequest) => {
     setActiveId(review.id);
     setEditing(false);
+    setEditingCell(null);
+    setEditData({ ...((review.reviewedData ?? review.submittedData ?? {}) as Record<string, unknown>) });
     try {
       const full = await getReview(review.id);
-      setEditData({ ...(full.reviewedData ?? full.submittedData) });
+      setEditData({ ...((full.reviewedData ?? full.submittedData) as Record<string, unknown>) });
     } catch (err) {
       toast.error(getApiError(err));
     }
@@ -271,6 +309,27 @@ export default function ReviewPage() {
     setOpenedKey(null);
     setActiveId(null);
     setEditing(false);
+    setEditingCell(null);
+  };
+
+  const beginCellEdit = (review: ReviewRequest, key: string, value: unknown) => {
+    if (!editing || !isAdmin || review.status !== "PENDING_REVIEW") return;
+    setEditingCell({ rowId: review.id, key });
+    setCellDraft(toInput(value));
+    requestAnimationFrame(() => {
+      cellInputRef.current?.focus();
+      cellInputRef.current?.select();
+    });
+  };
+
+  const commitCell = (review: ReviewRequest, key: string) => {
+    const original = cellValue(
+      review,
+      (review.reviewedData ?? review.submittedData ?? {}) as Record<string, unknown>,
+      key,
+    );
+    setEditData((d) => ({ ...d, [key]: coerceValue(original, cellDraft) }));
+    setEditingCell(null);
   };
 
   const persistEdits = async (review: ReviewRequest) => {
@@ -288,6 +347,7 @@ export default function ReviewPage() {
       await approveReview(active.id);
       toast.success("تم اعتماد السجل");
       setEditing(false);
+      setEditingCell(null);
       await load();
     } catch (err) {
       toast.error(getApiError(err));
@@ -321,6 +381,7 @@ export default function ReviewPage() {
       await deleteReview(active.id);
       toast.success("تم حذف الطلب المعلّق");
       setEditing(false);
+      setEditingCell(null);
       await load();
       if (group?.items.length === 1) closeDetail();
     } catch (err) {
@@ -332,14 +393,13 @@ export default function ReviewPage() {
 
   const cancelEdit = () => {
     if (!active) return;
-    setEditData({ ...(active.reviewedData ?? active.submittedData) });
+    setEditData({ ...((active.reviewedData ?? active.submittedData ?? {}) as Record<string, unknown>) });
     setEditing(false);
+    setEditingCell(null);
   };
 
   const selectCls =
     "rounded-lg border border-stone-200 bg-white px-3 py-2 text-[13px] text-stone-700 focus:outline-none focus:ring-2 focus:ring-primary-500/40";
-  const inputCls =
-    "w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-[13px] text-stone-800 focus:outline-none focus:ring-2 focus:ring-primary-500/40";
 
   return (
     <div className="flex min-h-full flex-col gap-6">
@@ -416,20 +476,24 @@ export default function ReviewPage() {
               </thead>
               <tbody>
                 {group.items.map((review) => {
-                  const data = (review.reviewedData ?? review.submittedData) as Record<string, unknown>;
+                  const data = (review.reviewedData ?? review.submittedData ?? {}) as Record<string, unknown>;
                   const selected = review.id === activeId;
+                  const rowEditable = editing && isAdmin && selected && review.status === "PENDING_REVIEW";
                   return (
                     <tr
                       key={review.id}
-                      tabIndex={0}
-                      onClick={() => void chooseRow(review)}
+                      tabIndex={editing ? -1 : 0}
+                      onClick={() => {
+                        if (!editing) void chooseRow(review);
+                      }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") void chooseRow(review);
+                        if (!editing && (e.key === "Enter" || e.key === " ")) void chooseRow(review);
                       }}
                       aria-selected={selected}
                       className={cn(
-                        "cursor-pointer outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500",
-                        selected ? "bg-primary-50/70" : "hover:bg-stone-50",
+                        "outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500",
+                        editing ? "cursor-default" : "cursor-pointer hover:bg-stone-50",
+                        selected ? "bg-primary-50/70" : "",
                         review.status !== "PENDING_REVIEW" && "text-stone-500",
                       )}
                     >
@@ -441,21 +505,54 @@ export default function ReviewPage() {
                           </span>
                         </span>
                       </td>
-                      {COLUMNS[group.entity].map((col) => (
-                        <td
-                          key={col.key}
-                          className={cn(
-                            "border-b border-stone-100 px-3 py-3 align-top",
-                            col.mono && "font-mono tabular-nums",
-                          )}
-                        >
-                          {col.key === "items" ? (
-                            <ItemsCell value={data[col.key]} />
-                          ) : (
-                            <bdi dir="auto">{formatValue(data[col.key], col.mono)}</bdi>
-                          )}
-                        </td>
-                      ))}
+                      {COLUMNS[group.entity].map((col) => {
+                        const value = cellValue(review, data, col.key);
+                        const isCellEditing = editingCell?.rowId === review.id && editingCell.key === col.key;
+                        const canEdit = rowEditable && !col.noEdit && col.key !== "items";
+                        return (
+                          <td
+                            key={col.key}
+                            onClick={(e) => {
+                              if (!canEdit || isCellEditing) return;
+                              e.stopPropagation();
+                              beginCellEdit(review, col.key, value);
+                            }}
+                            title={canEdit ? "اضغط للتعديل" : undefined}
+                            className={cn(
+                              "border-b border-stone-100 px-3 py-3 align-top",
+                              col.mono && "font-mono tabular-nums",
+                              canEdit && "cursor-text transition-colors hover:bg-primary-100/60",
+                              isCellEditing && "bg-white ring-2 ring-inset ring-primary-500",
+                            )}
+                          >
+                            {col.key === "items" ? (
+                              <ItemsCell value={value} />
+                            ) : isCellEditing ? (
+                              <input
+                                ref={cellInputRef}
+                                dir={col.mono ? "ltr" : "auto"}
+                                value={cellDraft}
+                                onChange={(e) => setCellDraft(e.target.value)}
+                                onFocus={(e) => e.currentTarget.select()}
+                                onClick={(e) => e.stopPropagation()}
+                                onBlur={() => commitCell(review, col.key)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitCell(review, col.key);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    setEditingCell(null);
+                                  }
+                                }}
+                                className="w-full min-w-[80px] rounded border border-primary-400 bg-white px-1.5 py-1 text-[13px] text-stone-800 outline-none"
+                              />
+                            ) : (
+                              <bdi dir="auto">{formatValue(value, col.mono)}</bdi>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })}
@@ -464,31 +561,18 @@ export default function ReviewPage() {
           </div>
 
           {editing && active && isAdmin && active.status === "PENDING_REVIEW" && (
-            <div className="rounded-xl border border-stone-200 bg-white p-5">
-              <h3 className="text-[13px] font-medium text-stone-800">تعديل قبل الاعتماد</h3>
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {COLUMNS[group.entity]
-                  .filter((col) => col.key !== "items" && !col.noEdit)
-                  .map((col) => (
-                    <label key={col.key} className="block">
-                      <span className="mb-1 block text-[12px] text-stone-500">{col.label}</span>
-                      <input
-                        dir={col.mono ? "ltr" : "auto"}
-                        className={inputCls}
-                        value={editData[col.key] == null ? "" : String(editData[col.key])}
-                        onChange={(e) =>
-                          setEditData((d) => ({ ...d, [col.key]: e.target.value === "" ? null : e.target.value }))
-                        }
-                      />
-                    </label>
-                  ))}
-              </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2.5 text-[12px] leading-5 text-primary-800">
+              <Pencil size={14} strokeWidth={1.5} />
+              وضع التعديل مفعّل — اضغط على أي خلية في الصف المحدد وعدّلها، ثم Enter أو اضغط خارج الخلية للحفظ.
+              <span className="text-primary-600">Esc لإلغاء الخلية.</span>
             </div>
           )}
 
           <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-end gap-3 border-t border-stone-200 bg-white/95 px-5 py-4 backdrop-blur-sm">
             <span className="me-auto text-[12px] text-stone-500">
-              {active ? `${STATUS_LABELS[active.status]} · سجل ${NUMBER_FORMAT.format(active.id)}` : ""}
+              {active
+                ? `${STATUS_LABELS[active.status]} · سجل ${NUMBER_FORMAT.format(active.id)}${editing ? " · وضع التعديل" : ""}`
+                : ""}
             </span>
             <button
               onClick={() => void handleDelete()}
