@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Download, Pencil, Loader2, X } from "lucide-react";
-import { cn, todayLocal, CONDITION_LABELS } from "@/lib/utils";
+import { cn, todayLocal, formatDate, CONDITION_LABELS } from "@/lib/utils";
 import { getApiError } from "@/lib/api";
 import { listAllDailyLogs, exportDailyLogs } from "@/services/dailylogs";
 import { projectOptions } from "@/services/projects";
 import type { DailyLog, Project } from "@/types";
 
 interface ColFilters {
+  dateFrom: string;
+  dateTo: string;
   serial: string;
   code: string;
   name: string;
@@ -29,6 +31,8 @@ interface ColFilters {
 }
 
 const emptyFilters: ColFilters = {
+  dateFrom: "",
+  dateTo: "",
   serial: "",
   code: "",
   name: "",
@@ -72,6 +76,8 @@ export default function DataDayPage() {
   const buildParams = () => {
     const params: Record<string, unknown> = {};
     const map: [keyof ColFilters, string][] = [
+      ["dateFrom", "dateFrom"],
+      ["dateTo", "dateTo"],
       ["code", "code"],
       ["name", "name"],
       ["productivityType", "productivityType"],
@@ -188,6 +194,29 @@ export default function DataDayPage() {
     </div>
   );
 
+  const dateRangeCell = (from: keyof ColFilters, to: keyof ColFilters) => (
+    <div className="flex flex-col gap-1">
+      <input
+        type="date"
+        dir="ltr"
+        value={filters[from]}
+        onChange={(e) => setF(from, e.target.value)}
+        title="من تاريخ"
+        aria-label="من تاريخ"
+        className={fInput}
+      />
+      <input
+        type="date"
+        dir="ltr"
+        value={filters[to]}
+        onChange={(e) => setF(to, e.target.value)}
+        title="إلى تاريخ"
+        aria-label="إلى تاريخ"
+        className={fInput}
+      />
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -213,9 +242,10 @@ export default function DataDayPage() {
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
-          <table className="w-full min-w-[1250px] border-collapse">
+          <table className="w-full min-w-[1370px] border-collapse">
             <thead>
               <tr>
+                <th className={thCls}>التاريخ</th>
                 <th className={thCls}>الرقم التسلسلي</th>
                 <th className={thCls}>الكود</th>
                 <th className={thCls}>اسم المعدة</th>
@@ -232,6 +262,7 @@ export default function DataDayPage() {
                 <th className={cn(thCls, "text-center")}>تعديل</th>
               </tr>
               <tr>
+                <td className={tfCls}>{dateRangeCell("dateFrom", "dateTo")}</td>
                 <td className={tfCls}>
                   <input
                     dir="ltr"
@@ -337,14 +368,14 @@ export default function DataDayPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-10 text-center text-slate-400 text-sm">
+                  <td colSpan={15} className="px-4 py-10 text-center text-slate-400 text-sm">
                     <Loader2 size={18} className="animate-spin inline ml-2" />
                     جاري تحميل السجلات...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-10 text-center text-slate-400 text-sm">
+                  <td colSpan={15} className="px-4 py-10 text-center text-slate-400 text-sm">
                     لا توجد سجلات مطابقة
                   </td>
                 </tr>
@@ -354,6 +385,9 @@ export default function DataDayPage() {
                     key={rec.id}
                     className="hover:bg-primary-50/50 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_41px]"
                   >
+                    <td className={cn(tdCls, "font-mono text-xs whitespace-nowrap")} dir="ltr">
+                      {formatDate(rec.date)}
+                    </td>
                     <td className={cn(tdCls, "font-mono text-xs")} dir="ltr">
                       {rec.equipment.serialNumber ?? <span className="text-slate-300">—</span>}
                     </td>
