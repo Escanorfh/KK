@@ -1,6 +1,7 @@
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { scopeOr } from "../../utils/scope";
+import { assertManagerSendApproved, ensureRecordReview } from "../../utils/reviewApproval";
 import type { Prisma, RepairOrderStatus } from "@prisma/client";
 import {
   ManagersApiError,
@@ -84,6 +85,51 @@ function fail(message: string, status = 400): never {
 
 function isoDate(d: Date | null | undefined) {
   return d ? d.toISOString().slice(0, 10) : null;
+}
+
+/** نسخة مسطّحة من أمر الإصلاح تُعرض وتُعدّل في صفحة مراجعة البيانات. */
+function toReviewInput(record: any, userId: number) {
+  return {
+    data: {
+      requestNo: record.requestNo,
+      type: record.type,
+      equipmentId: record.equipmentId,
+      projectId: record.projectId,
+      sectorId: record.sectorId,
+      entryDate: isoDate(record.entryDate),
+      exitDate: isoDate(record.exitDate),
+      hours: record.hours,
+      km: record.km,
+      workshop: record.workshop,
+      faultDescription: record.faultDescription,
+      actionTaken: record.actionTaken,
+      itemName: record.itemName,
+      partModel: record.partModel,
+      itemCode: record.itemCode,
+      technicalCode: record.technicalCode,
+      quantity: record.quantity,
+      unit: record.unit,
+      itemCondition: record.itemCondition,
+      siteName: record.siteName,
+      requesterName: record.requesterName,
+      technicianPhone: record.technicianPhone,
+      estimatedCost: record.estimatedCost,
+      actualCost: record.actualCost,
+      notes: record.notes,
+      parts: (Array.isArray(record.parts) ? record.parts : []).map((p: any) => ({ name: p.name, code: p.code, qty: p.qty, notes: p.notes })),
+    },
+    context: {
+      projectId: record.projectId,
+      projectCode: record.equipment?.project?.code ?? null,
+      sectorId: record.sectorId,
+      projectName: record.project?.name ?? record.equipment?.project?.name ?? null,
+      sectorName: record.sector?.name ?? record.equipment?.sector?.name ?? null,
+      equipmentCode: record.equipment?.code ?? null,
+      equipmentName: record.equipment?.name ?? null,
+      contextSource: "SNAPSHOT" as const,
+    },
+    submittedById: record.createdById ?? userId,
+  };
 }
 
 const REQUEST_NO_SEQUENCE = "RepairOrder_requestNo_seq";
@@ -336,6 +382,16 @@ export async function create(
   });
 
   await logAudit(userId, "RepairOrder", record.id, "CREATE", { requestNo, equipmentId: data.equipmentId });
+
+  // كل أمر إصلاح لازم يمر على المراجعة قبل الإرسال للمديرين — حتى لو صاحبه ROOT.
+  try {
+    await ensureRecordReview("repairorder", record.id, toReviewInput(record, userId));
+  } catch (err) {
+    // ما نسيبش طلب من غير مراجعة: لو فشل إنشاء السجل نرجّع الطلب اللي اتعمل.
+    await prisma.repairOrder.delete({ where: { id: record.id } }).catch(() => undefined);
+    throw err;
+  }
+
   return { record: decorate(record) };
 }
 
@@ -598,6 +654,7 @@ export async function send(id: number, userId: number) {
   const existing = await prisma.repairOrder.findUnique({ where: { id }, include: recordInclude });
   if (!existing) fail("طلب الإصلاح غير موجود", 404);
   if (existing.managersId || existing.sentAt) fail("تم إرسال هذا الطلب لنظام المدرين بالفعل", 409);
+  await assertManagerSendApproved("repairorder", id, toReviewInput(existing, userId));
 
   let remoteCreated: { id: number; number: string | null } | null = null;
 

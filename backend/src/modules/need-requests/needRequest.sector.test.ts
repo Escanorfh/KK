@@ -223,7 +223,15 @@ const stubs: Record<string, unknown> = {};
 
 function plant(next: Record<string, unknown>): void {
   for (const key of Object.keys(stubs)) delete stubs[key];
-  Object.assign(stubs, { auditLog: { create: async () => null } }, next);
+  Object.assign(
+    stubs,
+    {
+      auditLog: { create: async () => null },
+      // بوابة مراجعة البيانات: الطلب معتمد في هذه الاختبارات (الاختبار بيتحقق من القطاع مش الاعتماد).
+      reviewRequest: { findFirst: async () => ({ id: 9001 }) },
+    },
+    next,
+  );
 }
 
 /** بديلprisma: كل.delegate محتاجه مزروع، وأي sector بيقرا من التخزين المحلي */

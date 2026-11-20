@@ -1,8 +1,8 @@
 import api from "@/lib/api";
-import type { Paginated, ReviewRequest } from "@/types";
+import type { Paginated, ReviewEntity, ReviewRequest } from "@/types";
 
 export async function listReviews(params: {
-  entity?: "dailylog" | "maintenance";
+  entity?: ReviewEntity;
   status?: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
   submittedBy?: number;
   page?: number;
@@ -31,5 +31,23 @@ export async function approveReview(id: number) {
 
 export async function rejectReview(id: number, reason: string) {
   const { data } = await api.post<ReviewRequest>(`/review/${id}/reject`, { reason });
+  return data;
+}
+
+/** اعتماد كل سجلات المجموعة في طلب واحد. */
+export interface BulkApproveResult {
+  approved: number;
+  skipped: number;
+  total: number;
+}
+
+export async function bulkApproveReviews(ids: number[]) {
+  const { data } = await api.post<BulkApproveResult>("/review/bulk-approve", { ids });
+  return data;
+}
+
+/** حذف طلب معلّق وسجله المرتبط لو لسه مااترسلش. */
+export async function deleteReview(id: number) {
+  const { data } = await api.delete<{ message: string }>(`/review/${id}`);
   return data;
 }

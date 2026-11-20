@@ -184,9 +184,11 @@ export interface Fault {
 
 export type ReviewStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED";
 
+export type ReviewEntity = "dailylog" | "maintenance" | "repairorder" | "needrequest";
+
 export interface ReviewRequest {
   id: number;
-  entity: "dailylog" | "maintenance";
+  entity: ReviewEntity;
   status: ReviewStatus;
   clientRequestId?: string | null;
   submittedById: number;

@@ -1,9 +1,11 @@
 import { z } from "zod";
 
-const optionalId = z.coerce.number().int().positive().nullable().optional();
+/** الأنواع الأربعة اللي بتظهر في مراجعة البيانات. */
+export const REVIEW_ENTITIES = ["dailylog", "maintenance", "repairorder", "needrequest"] as const;
+export type ReviewEntity = (typeof REVIEW_ENTITIES)[number];
 
 export const listReviewQuerySchema = z.object({
-  entity: z.enum(["dailylog", "maintenance"]).optional(),
+  entity: z.enum(REVIEW_ENTITIES).optional(),
   status: z.enum(["PENDING_REVIEW", "APPROVED", "REJECTED"]).optional(),
   submittedBy: z.coerce.number().int().positive().optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -11,8 +13,10 @@ export const listReviewQuerySchema = z.object({
 });
 
 export const createReviewSchema = z.object({
-  entity: z.enum(["dailylog", "maintenance"]),
+  entity: z.enum(REVIEW_ENTITIES),
   data: z.record(z.unknown()),
+  /** معرف السجل الموجود فعلًا (أمر إصلاح / طلب احتياج) — يُستخدم لمنع الإرسال قبل الاعتماد. */
+  recordId: z.coerce.number().int().positive().optional(),
   clientRequestId: z.string().trim().min(1).max(120).optional(),
   context: z
     .object({
@@ -35,4 +39,12 @@ export const updateReviewSchema = z.object({
 
 export const rejectReviewSchema = z.object({
   reason: z.string().trim().min(1, "سبب الرفض مطلوب"),
+});
+
+/** اعتماد كل سجلات مجموعة (يوم · مستخدم · نوع · مشروع) في طلب واحد. */
+export const bulkApproveReviewSchema = z.object({
+  ids: z
+    .array(z.coerce.number().int().positive())
+    .min(1, "اختر سجلًا واحدًا على الأقل")
+    .max(200, "لا يمكن اعتماد أكثر من 200 سجل في مرة واحدة"),
 });

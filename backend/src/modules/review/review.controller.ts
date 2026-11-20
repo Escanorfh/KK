@@ -6,7 +6,13 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     const q = (req as Request & { validatedQuery: Record<string, unknown> }).validatedQuery;
     res.json(
       await reviewService.list(
-        q as { page: number; pageSize: number; entity?: "dailylog" | "maintenance"; status?: "PENDING_REVIEW" | "APPROVED" | "REJECTED"; submittedBy?: number },
+        q as {
+          page: number;
+          pageSize: number;
+          entity?: "dailylog" | "maintenance" | "repairorder" | "needrequest";
+          status?: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+          submittedBy?: number;
+        },
         req.user!,
       ),
     );
@@ -51,6 +57,23 @@ export async function approve(req: Request, res: Response, next: NextFunction) {
 export async function reject(req: Request, res: Response, next: NextFunction) {
   try {
     res.json(await reviewService.reject(Number(req.params.id), req.user!.id, req.body.reason));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkApprove(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { ids } = req.body as { ids: number[] };
+    res.json(await reviewService.bulkApprove(ids, req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function remove(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await reviewService.remove(Number(req.params.id), req.user!.id, req.user!.role));
   } catch (err) {
     next(err);
   }

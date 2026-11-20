@@ -2,6 +2,7 @@ import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { scopeOr } from "../../utils/scope";
 import { isSectorMemberOfProject } from "../../utils/sectorMembership";
+import { assertManagerSendApproved, ensureRecordReview } from "../../utils/reviewApproval";
 import type { NeedRequestStatus } from "@prisma/client";
 import {
   ManagersApiError,
@@ -63,6 +64,40 @@ export function formatNo(requestNo: number) {
 
 function isoDate(d: Date | null | undefined) {
   return d ? d.toISOString().slice(0, 10) : null;
+}
+
+/** نسخة مسطّحة من طلب الاحتياج تُعرض وتُعدّل في صفحة مراجعة البيانات. */
+function toReviewInput(record: any, userId: number) {
+  return {
+    data: {
+      requestNo: record.requestNo,
+      projectId: record.projectId,
+      sectorId: record.sectorId,
+      department: record.department,
+      requestDate: isoDate(record.requestDate),
+      items: (Array.isArray(record.items) ? record.items : []).map((it: any) => ({
+        rowNo: it.rowNo,
+        itemName: it.itemName,
+        itemCode: it.itemCode,
+        unit: it.unit,
+        qty: it.qty,
+        equipmentRef: it.equipmentRef,
+        currentBalance: it.currentBalance,
+        localSupply: it.localSupply,
+        foreignSupply: it.foreignSupply,
+        notes: it.notes,
+      })),
+    },
+    context: {
+      projectId: record.projectId,
+      projectCode: record.project?.code ?? null,
+      sectorId: record.sectorId,
+      projectName: record.project?.name ?? null,
+      sectorName: record.sector?.name ?? null,
+      contextSource: "SNAPSHOT" as const,
+    },
+    submittedById: record.createdById ?? userId,
+  };
 }
 
 function decorate<T extends { requestNo: number; managersStatus: string | null }>(record: T) {
@@ -150,6 +185,15 @@ export async function create(
     projectId: data.projectId ?? null,
     sectorId: data.sectorId ?? null,
   });
+
+  // كل طلب احتياج لازم يمر على المراجعة قبل الإرسال للمديرين — حتى لو صاحبه ROOT.
+  try {
+    await ensureRecordReview("needrequest", record.id, toReviewInput(record, userId));
+  } catch (err) {
+    await prisma.needRequest.delete({ where: { id: record.id } }).catch(() => undefined);
+    throw err;
+  }
+
   return { record: decorate(record) };
 }
 
@@ -451,6 +495,7 @@ export async function send(id: number, userId: number) {
   if (existing.managersId || existing.status === "SENT") {
     fail("تم إرسال هذا الطلب لنظام المدرين بالفعل", 409);
   }
+  await assertManagerSendApproved("needrequest", id, toReviewInput(existing, userId));
   if (!existing.project) {
     fail("اختر المشروع قبل إرسال الطلب لنظام المدرين", 422);
   }
