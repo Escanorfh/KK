@@ -50,8 +50,8 @@ type SaveInput = {
   parts?: PartInput[];
 };
 
-export async function ensureEquipment(equipmentId: number) {
-  const equipment = await prisma.equipment.findUnique({
+export async function ensureEquipment(equipmentId: number, db: any = prisma) {
+  const equipment = await db.equipment.findUnique({
     where: { id: equipmentId },
     include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
   });
@@ -68,7 +68,9 @@ async function assertReadingsAllowed(input: {
   meterReading?: number | null;
   kmMeter?: number | null;
   excludeMaintenanceId?: number;
+  db?: any;
 }) {
+  const db = input.db ?? prisma;
   if (input.trackingMode === "HOURS" && input.kmMeter != null) {
     fail("وضع تتبع هذه المعدة بالساعات فقط — لا يمكن تسجيل الكيلومترات", 400);
   }
@@ -84,6 +86,7 @@ async function assertReadingsAllowed(input: {
       exclude: input.excludeMaintenanceId
         ? { maintenanceId: input.excludeMaintenanceId }
         : undefined,
+      db,
     });
   }
   if (input.trackingMode !== "HOURS") {
@@ -95,12 +98,13 @@ async function assertReadingsAllowed(input: {
       exclude: input.excludeMaintenanceId
         ? { maintenanceId: input.excludeMaintenanceId }
         : undefined,
+      db,
     });
   }
 }
 
-async function nextWorkOrderNo(equipmentId: number): Promise<number | null> {
-  const equipment = await prisma.equipment.findUnique({
+async function nextWorkOrderNo(equipmentId: number, db: any = prisma): Promise<number | null> {
+  const equipment = await db.equipment.findUnique({
     where: { id: equipmentId },
     select: { projectId: true, project: { select: { id: true, code: true } } },
   });
@@ -109,7 +113,7 @@ async function nextWorkOrderNo(equipmentId: number): Promise<number | null> {
   const digits = (equipment.project.code ?? "").replace(/\D/g, "");
   const base = Math.min((digits ? Number(digits) : equipment.project.id) * 1_000_000, 2_000_000_000);
 
-  const last = await prisma.maintenance.aggregate({
+  const last = await db.maintenance.aggregate({
     where: { equipment: { projectId: equipment.projectId } },
     _max: { workOrderNo: true },
   });
@@ -361,27 +365,28 @@ export async function createApproved(
     clientRequestId: input.clientRequestId,
     parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null && (p.qty as unknown) !== "" ? Number(p.qty) : null })),
   };
-  const equipment = await ensureEquipment(normalized.equipmentId);
+  const equipment = await ensureEquipment(normalized.equipmentId, db);
   await assertReadingsAllowed({
     equipmentId: normalized.equipmentId,
     trackingMode: equipment.trackingMode,
     date: normalized.date,
     meterReading: normalized.meterReading,
     kmMeter: normalized.kmMeter,
+    db,
   });
 
   if (!normalized.date) fail("التاريخ مطلوب", 400);
-  const workOrderNo = normalized.workOrderNo ?? (await nextWorkOrderNo(normalized.equipmentId));
+  const workOrderNo = normalized.workOrderNo ?? (await nextWorkOrderNo(normalized.equipmentId, db));
   let effProjectId = context?.projectId ?? null;
   let effSectorId = context?.sectorId ?? null;
   if (effProjectId == null && effSectorId == null && (context?.contextSource ?? "UNKNOWN") === "UNKNOWN") {
     const { resolveEquipmentAssignmentAtDate } = await import("../transfers/transfer.service.js");
-    const eff = await resolveEquipmentAssignmentAtDate(normalized.equipmentId, new Date(normalized.date));
+    const eff = await resolveEquipmentAssignmentAtDate(normalized.equipmentId, new Date(normalized.date), db);
     effProjectId = eff.projectId;
     effSectorId = eff.sectorId;
   }
-  const effProject = effProjectId != null ? await prisma.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
-  const effSector = effSectorId != null ? await prisma.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
+  const effProject = effProjectId != null ? await db.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
+  const effSector = effSectorId != null ? await db.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
 
   const ctx: ContextSnapshot = {
     projectId: effProjectId,
@@ -419,7 +424,7 @@ export async function createApproved(
     equipmentId: normalized.equipmentId,
     date: normalized.date,
     reason: "review approved",
-  });
+  }, db);
   return { record, updated: false };
 }
 

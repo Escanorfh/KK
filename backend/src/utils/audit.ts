@@ -5,10 +5,11 @@ export async function logAudit(
   entity: string,
   recordId: number,
   action: "CREATE" | "UPDATE" | "DELETE",
-  details?: unknown
+  details?: unknown,
+  db: any = prisma
 ) {
   try {
-    await prisma.auditLog.create({
+    await db.auditLog.create({
       data: {
         userId,
         entity,

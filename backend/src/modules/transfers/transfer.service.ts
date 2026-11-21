@@ -271,12 +271,12 @@ export function selectTransferAssignmentAtDate(
 }
 
 // Complete transfers whose effective date has arrived: update Equipment assignment.
-export async function resolveEquipmentAssignmentAtDate(equipmentId: number, recordDate: Date): Promise<{ projectId: number | null; sectorId: number | null }> {
-  const equipment = await prisma.equipment.findUnique({ where: { id: equipmentId }, select: { projectId: true, sectorId: true } });
+export async function resolveEquipmentAssignmentAtDate(equipmentId: number, recordDate: Date, db: any = prisma): Promise<{ projectId: number | null; sectorId: number | null }> {
+  const equipment = await db.equipment.findUnique({ where: { id: equipmentId }, select: { projectId: true, sectorId: true } });
   if (!equipment) return { projectId: null, sectorId: null };
 
   // Consider both APPROVED and COMPLETED transfers whose effectiveDate has arrived.
-  const transfers = await prisma.equipmentTransfer.findMany({
+  const transfers = await db.equipmentTransfer.findMany({
     where: {
       equipmentId,
       status: { in: ["APPROVED", "COMPLETED"] },

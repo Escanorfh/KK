@@ -329,14 +329,19 @@ async function approveInTx(tx: Prisma.TransactionClient, id: number, userId: num
     action: "APPROVE",
     entity: existing.entity,
     recordId: record.id,
-  });
+  }, tx);
 
   const review = await tx.reviewRequest.findUnique({ where: { id } });
   return { approved: true, review, record, updated };
 }
 
+// الاعتماد بيعمل عشرات الاستعلامات (قراءة المعدة، العدّادات، المشروع، القطاع، تدقيق...)
+// والـ transaction الافتراضية في Prisma بتقفل بعد 5 ثواني — وده كان بيرجّع 500 على السجلات
+// اللي فيها خطوات زيادة. النافذة هنا مفتوحة لحد 55 ثانية (سقف دالة Vercel = 60).
+const APPROVE_TX = { timeout: 55_000, maxWait: 15_000 } as const;
+
 export async function approve(id: number, userId: number) {
-  const result = await prisma.$transaction((tx) => approveInTx(tx, id, userId, true));
+  const result = await prisma.$transaction((tx) => approveInTx(tx, id, userId, true), APPROVE_TX);
   return { review: result.review, record: result.record, updated: result.updated };
 }
 
@@ -352,7 +357,7 @@ export async function bulkApprove(ids: number[], userId: number) {
       else skipped += 1;
     }
     return { approved, skipped };
-  });
+  }, APPROVE_TX);
   await logAudit(userId, "ReviewRequest", 0, "UPDATE", {
     action: "BULK_APPROVE",
     count: result.approved,

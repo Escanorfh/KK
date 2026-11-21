@@ -31,13 +31,14 @@ async function latestReadingBefore(
   equipmentId: number,
   before: Date,
   kind: MeterKind,
-  exclude?: { dailyLogId?: number; maintenanceId?: number }
+  exclude?: { dailyLogId?: number; maintenanceId?: number },
+  db: any = prisma
 ): Promise<ReadingSource | null> {
   const candidates: ReadingSource[] = [];
 
   if (kind === "hours") {
     const [log, maintenance, reset] = await Promise.all([
-      prisma.dailyLog.findFirst({
+      db.dailyLog.findFirst({
         where: {
           equipmentId,
           date: { lt: before },
@@ -47,7 +48,7 @@ async function latestReadingBefore(
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { date: true, endMeter: true },
       }),
-      prisma.maintenance.findFirst({
+      db.maintenance.findFirst({
         where: {
           equipmentId,
           date: { lt: before },
@@ -57,7 +58,7 @@ async function latestReadingBefore(
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { date: true, meterReading: true },
       }),
-      prisma.meterReset.findFirst({
+      db.meterReset.findFirst({
         where: { equipmentId, date: { lt: before }, hours: { not: null } },
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { date: true, hours: true },
@@ -70,7 +71,7 @@ async function latestReadingBefore(
     if (reset?.hours != null) candidates.push({ date: reset.date, value: reset.hours });
   } else {
     const [maintenance, reset] = await Promise.all([
-      prisma.maintenance.findFirst({
+      db.maintenance.findFirst({
         where: {
           equipmentId,
           date: { lt: before },
@@ -80,7 +81,7 @@ async function latestReadingBefore(
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { date: true, kmMeter: true },
       }),
-      prisma.meterReset.findFirst({
+      db.meterReset.findFirst({
         where: { equipmentId, date: { lt: before }, km: { not: null } },
         orderBy: [{ date: "desc" }, { id: "desc" }],
         select: { date: true, km: true },
@@ -103,15 +104,17 @@ export async function assertReadingNotDecreasing(opts: {
   kind: MeterKind;
   value: number | null | undefined;
   exclude?: { dailyLogId?: number; maintenanceId?: number };
+  db?: any;
 }) {
   const { equipmentId, value, kind, exclude } = opts;
+  const db = opts.db ?? prisma;
   if (value == null) return;
 
   const date = toDateOnly(opts.date);
-  const latest = await latestReadingBefore(equipmentId, date, kind, exclude);
+  const latest = await latestReadingBefore(equipmentId, date, kind, exclude, db);
   if (!latest) return;
 
-  const resetBetween = await prisma.meterReset.findFirst({
+  const resetBetween = await db.meterReset.findFirst({
     where: {
       equipmentId,
       date: { gt: latest.date, lte: date },

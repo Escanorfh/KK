@@ -102,8 +102,8 @@ const dataFields = (input: SaveInput, context?: ContextSnapshot) => ({
     : {}),
 });
 
-export async function ensureEquipment(equipmentId: number) {
-  const equipment = await prisma.equipment.findUnique({
+export async function ensureEquipment(equipmentId: number, db: any = prisma) {
+  const equipment = await db.equipment.findUnique({
     where: { id: equipmentId },
     include: { project: { select: { code: true, name: true } }, sector: { select: { name: true } } },
   });
@@ -132,7 +132,8 @@ async function assertMeterNotBelowBaseline(
   equipmentId: number,
   date: Date,
   endMeter: number | null,
-  excludeId?: number
+  excludeId?: number,
+  db: any = prisma
 ) {
   await assertReadingNotDecreasing({
     equipmentId,
@@ -140,6 +141,7 @@ async function assertMeterNotBelowBaseline(
     kind: "hours",
     value: endMeter,
     exclude: excludeId ? { dailyLogId: excludeId } : undefined,
+    db,
   });
 }
 
@@ -324,25 +326,25 @@ export async function createApproved(
     diesel: input.diesel != null && (input.diesel as unknown) !== "" ? Number(input.diesel) : null,
     productivityCount: input.productivityCount != null && (input.productivityCount as unknown) !== "" ? Number(input.productivityCount) : null,
   };
-  const equipment = await ensureEquipment(normalized.equipmentId);
+  const equipment = await ensureEquipment(normalized.equipmentId, db);
   assertHoursAllowed(equipment, normalized);
   if (!normalized.date) throw Object.assign(new Error("التاريخ مطلوب"), { status: 400 });
   const date = toDate(normalized.date);
 
   if (equipment.trackingMode !== "KM") {
-    await assertMeterNotBelowBaseline(normalized.equipmentId, date, normalized.endMeter ?? null);
+    await assertMeterNotBelowBaseline(normalized.equipmentId, date, normalized.endMeter ?? null, undefined, db);
   }
 
   let effProjectId = context?.projectId ?? null;
   let effSectorId = context?.sectorId ?? null;
   if (effProjectId == null && effSectorId == null && (context?.contextSource ?? "UNKNOWN") === "UNKNOWN") {
     const { resolveEquipmentAssignmentAtDate } = await import("../transfers/transfer.service.js");
-    const eff = await resolveEquipmentAssignmentAtDate(normalized.equipmentId, date);
+    const eff = await resolveEquipmentAssignmentAtDate(normalized.equipmentId, date, db);
     effProjectId = eff.projectId;
     effSectorId = eff.sectorId;
   }
-  const effProject = effProjectId != null ? await prisma.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
-  const effSector = effSectorId != null ? await prisma.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
+  const effProject = effProjectId != null ? await db.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
+  const effSector = effSectorId != null ? await db.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
 
   const ctx: ContextSnapshot = {
     projectId: effProjectId,
@@ -367,7 +369,7 @@ export async function createApproved(
       data: dataFields(normalized),
       include,
     });
-    await logAudit(userId, "DailyLog", record.id, "UPDATE", { reason: "review approved (same-day upsert)" });
+    await logAudit(userId, "DailyLog", record.id, "UPDATE", { reason: "review approved (same-day upsert)" }, db);
     return { record, updated: true };
   }
 
@@ -375,7 +377,7 @@ export async function createApproved(
     data: { ...dataFields(normalized, ctx), userId },
     include,
   });
-  await logAudit(userId, "DailyLog", record.id, "CREATE", { date: normalized.date, reason: "review approved" });
+  await logAudit(userId, "DailyLog", record.id, "CREATE", { date: normalized.date, reason: "review approved" }, db);
   return { record, updated: false };
 }
 
