@@ -345,26 +345,91 @@ export async function approve(id: number, userId: number) {
   return { review: result.review, record: result.record, updated: result.updated };
 }
 
-/** اعتماد مجموعة كاملة في transaction واحدة — أي فشل يرجّع الكل. */
+/** فحص مُسبق لكل طلبات المجموعة قبل أي كتابة: لو واحد منهم اترسل للمديرين،
+ *  نرفض المجموعة كلها بدل ما نعتمد نصها. (الاعتماد نفسه بيتنفّذ سجل-سجل عشان مهل الوقت.) */
+async function assertAllSendable(ids: number[]) {
+  const pending = await prisma.reviewRequest.findMany({
+    where: { id: { in: ids }, status: "PENDING_REVIEW" },
+    select: { id: true, entity: true, recordId: true },
+  });
+
+  const repairIds = pending.filter((r) => r.entity === "repairorder" && r.recordId != null).map((r) => r.recordId!);
+  const needIds = pending.filter((r) => r.entity === "needrequest" && r.recordId != null).map((r) => r.recordId!);
+
+  const [repairs, needs] = await Promise.all([
+    repairIds.length
+      ? prisma.repairOrder.findMany({
+          where: { id: { in: repairIds } },
+          select: { id: true, managersId: true, sentAt: true },
+        })
+      : Promise.resolve([] as Array<{ id: number; managersId: number | null; sentAt: Date | null }>),
+    needIds.length
+      ? prisma.needRequest.findMany({
+          where: { id: { in: needIds } },
+          select: { id: true, managersId: true, status: true },
+        })
+      : Promise.resolve([] as Array<{ id: number; managersId: number | null; status: string }>),
+  ]);
+
+  const repairMap = new Map(repairs.map((r) => [r.id, r]));
+  const needMap = new Map(needs.map((r) => [r.id, r]));
+
+  for (const row of pending) {
+    if (row.recordId == null) continue;
+    if (row.entity === "repairorder") {
+      const rec = repairMap.get(row.recordId);
+      if (!rec) fail("أمر الإصلاح المرتبط لم يعد موجودًا", 409);
+      if (rec.managersId || rec.sentAt) fail("تم إرسال أمر الإصلاح لنظام المدرين بالفعل", 409);
+    } else if (row.entity === "needrequest") {
+      const rec = needMap.get(row.recordId);
+      if (!rec) fail("طلب الاحتياج المرتبط لم يعد موجودًا", 409);
+      if (rec.managersId || rec.status === "SENT") fail("تم إرسال طلب الاحتياج لنظام المدرين بالفعل", 409);
+    }
+  }
+}
+
+/** اعتماد مجموعة كاملة — كل سجل في transaction قصيرة مستقلة، بمحدودية توازٍ.
+ *  الاعتماد الجماعي كان بيفشل لأن 29 سجل في transaction واحدة بياخدوا أكتر من مهلة Vercel،
+ *  فبنقسّم الشغل ده على 4 مسارات متوازية وبنجمّع اللي فشل بدل ما نرمي الكل. */
 export async function bulkApprove(ids: number[], userId: number) {
   const unique = [...new Set(ids)];
-  const result = await prisma.$transaction(async (tx) => {
-    let approved = 0;
-    let skipped = 0;
-    for (const id of unique) {
-      const one = await approveInTx(tx, id, userId, false);
-      if (one.approved) approved += 1;
-      else skipped += 1;
+  await assertAllSendable(unique);
+  const results: Array<{ id: number; approved: boolean; error?: string }> = new Array(unique.length);
+  let cursor = 0;
+
+  async function worker() {
+    for (;;) {
+      const i = cursor;
+      cursor += 1;
+      if (i >= unique.length) return;
+      const id = unique[i];
+      try {
+        const one = await prisma.$transaction(
+          (tx) => approveInTx(tx, id, userId, false),
+          { timeout: 25_000, maxWait: 10_000 },
+        );
+        results[i] = { id, approved: one.approved };
+      } catch (err) {
+        results[i] = { id, approved: false, error: (err as Error).message };
+      }
     }
-    return { approved, skipped };
-  }, APPROVE_TX);
+  }
+
+  const workers = Math.min(4, unique.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+
+  const approved = results.filter((r) => r?.approved).length;
+  const skipped = results.filter((r) => r && !r.approved && !r.error).length;
+  const failed = results.filter((r) => r?.error).map((r) => ({ id: r.id, message: r.error! }));
+
   await logAudit(userId, "ReviewRequest", 0, "UPDATE", {
     action: "BULK_APPROVE",
-    count: result.approved,
-    skipped: result.skipped,
+    count: approved,
+    skipped,
+    failed: failed.length,
     ids: unique,
   });
-  return { ...result, total: unique.length };
+  return { approved, skipped, failed, total: unique.length };
 }
 
 /** حذف طلب معلّق فقط — السجل المرتبط بيتمسح معاه لو لسه مااترسلش. */

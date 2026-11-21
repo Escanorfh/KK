@@ -343,8 +343,19 @@ export async function createApproved(
     effProjectId = eff.projectId;
     effSectorId = eff.sectorId;
   }
-  const effProject = effProjectId != null ? await db.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } }) : null;
-  const effSector = effSectorId != null ? await db.sector.findUnique({ where: { id: effSectorId }, select: { name: true } }) : null;
+  // نستفيد من العلاقات اللي اتجابت مع المعدة بدل استعلامين إضافيين لكل سجل.
+  const effProject =
+    effProjectId == null
+      ? null
+      : effProjectId === equipment.projectId
+        ? equipment.project
+        : await db.project.findUnique({ where: { id: effProjectId }, select: { code: true, name: true } });
+  const effSector =
+    effSectorId == null
+      ? null
+      : effSectorId === equipment.sectorId
+        ? equipment.sector
+        : await db.sector.findUnique({ where: { id: effSectorId }, select: { name: true } });
 
   const ctx: ContextSnapshot = {
     projectId: effProjectId,

@@ -361,11 +361,20 @@ export default function ReviewPage() {
     setBulkSaving(g.key);
     try {
       const result = await bulkApproveReviews(g.pendingIds);
-      toast.success(
-        `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل${
-          result.skipped ? ` وتجاهل ${NUMBER_FORMAT.format(result.skipped)} سجل معتمد بالفعل` : ""
-        }`,
-      );
+      const failed = result.failed ?? [];
+      if (failed.length > 0) {
+        toast.error(
+          `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل، وتعذّر اعتماد ${NUMBER_FORMAT.format(
+            failed.length,
+          )}: ${failed[0].message}`,
+        );
+      } else {
+        toast.success(
+          `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل${
+            result.skipped ? ` وتجاهل ${NUMBER_FORMAT.format(result.skipped)} سجل معتمد بالفعل` : ""
+          }`,
+        );
+      }
       await load();
     } catch (err) {
       toast.error(getApiError(err));

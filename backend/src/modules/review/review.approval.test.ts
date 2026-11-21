@@ -36,7 +36,13 @@ const prismaMock: any = {
       return null;
     },
     findFirst: async ({ where }: any) => db.reviews.find((r) => matches(r, where)) ?? null,
-    findMany: async () => db.reviews,
+    findMany: async ({ where }: any = {}) =>
+      db.reviews.filter((r) => {
+        if (!where) return true;
+        if (where.status && r.status !== where.status) return false;
+        if (where.id?.in && !where.id.in.includes(r.id)) return false;
+        return true;
+      }),
     count: async () => db.reviews.length,
     create: async ({ data }: any) => {
       const row = {
@@ -71,6 +77,8 @@ const prismaMock: any = {
   repairOrder: {
     findUnique: async ({ where }: any) =>
       db.repairOrders.find((r) => r.id === where.id) ?? null,
+    findMany: async ({ where }: any = {}) =>
+      db.repairOrders.filter((r) => !where?.id?.in || where.id.in.includes(r.id)),
     update: async ({ where, data }: any) => {
       const row = db.repairOrders.find((r) => r.id === where.id)!;
       Object.assign(row, data);
@@ -87,6 +95,8 @@ const prismaMock: any = {
   needRequest: {
     findUnique: async ({ where }: any) =>
       db.needRequests.find((r) => r.id === where.id) ?? null,
+    findMany: async ({ where }: any = {}) =>
+      db.needRequests.filter((r) => !where?.id?.in || where.id.in.includes(r.id)),
     update: async ({ where, data }: any) => {
       const row = db.needRequests.find((r) => r.id === where.id)!;
       Object.assign(row, data);

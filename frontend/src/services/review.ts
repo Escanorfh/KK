@@ -39,6 +39,7 @@ export interface BulkApproveResult {
   approved: number;
   skipped: number;
   total: number;
+  failed?: Array<{ id: number; message: string }>;
 }
 
 export async function bulkApproveReviews(ids: number[]) {
