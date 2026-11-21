@@ -265,7 +265,7 @@ export function errorHandler(
     return res.status(err.status).json({ message: err.message });
   }
 
-  res.status(500).json({ message: "حدث خطأ غير متوقع في الخادم" });
+  res.status(500).json({ message: "حدث خطأ غير متوقع في الخادم", debug: { name: err.name, message: err.message } });
 }
 
 app.use(errorHandler);
