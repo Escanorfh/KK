@@ -124,9 +124,9 @@ test("خطأ عادي بـ status (422) → نفس الرسالة والحالة
 test("كود Prisma غير مُعالَج أو خطأ غير معروف → 500 عام من غير تفاصيل داخلية", () => {
   const known = invoke(prismaError("P2004"));
   assert.equal(known.status, 500);
-  assert.match(known.body.message, /^حدث خطأ غير متوقع في الخادم/);
+  assert.match(known.body.message ?? "", /^حدث خطأ غير متوقع في الخادم/);
 
   const unknown = invoke(new Error("internal stack should not leak"));
   assert.equal(unknown.status, 500);
-  assert.match(unknown.body.message, /^حدث خطأ غير متوقع في الخادم/);
+  assert.match(unknown.body.message ?? "", /^حدث خطأ غير متوقع في الخادم/);
 });
