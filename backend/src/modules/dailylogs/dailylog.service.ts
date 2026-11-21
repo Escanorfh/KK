@@ -319,13 +319,14 @@ export async function createApproved(
   const normalized: SaveInput = {
     ...input,
     equipmentId: Number(input.equipmentId),
-    endMeter: input.endMeter != null ? Number(input.endMeter) : null,
-    operatingHours: input.operatingHours != null ? Number(input.operatingHours) : null,
-    diesel: input.diesel != null ? Number(input.diesel) : null,
-    productivityCount: input.productivityCount != null ? Number(input.productivityCount) : null,
+    endMeter: input.endMeter != null && input.endMeter !== "" ? Number(input.endMeter) : null,
+    operatingHours: input.operatingHours != null && input.operatingHours !== "" ? Number(input.operatingHours) : null,
+    diesel: input.diesel != null && input.diesel !== "" ? Number(input.diesel) : null,
+    productivityCount: input.productivityCount != null && input.productivityCount !== "" ? Number(input.productivityCount) : null,
   };
   const equipment = await ensureEquipment(normalized.equipmentId);
   assertHoursAllowed(equipment, normalized);
+  if (!normalized.date) fail("التاريخ مطلوب", 400);
   const date = toDate(normalized.date);
 
   if (equipment.trackingMode !== "KM") {

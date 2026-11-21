@@ -354,12 +354,12 @@ export async function createApproved(
   const normalized: SaveInput = {
     ...input,
     equipmentId: Number(input.equipmentId),
-    meterReading: input.meterReading != null ? Number(input.meterReading) : null,
-    kmMeter: input.kmMeter != null ? Number(input.kmMeter) : null,
-    downtime: input.downtime != null ? Number(input.downtime) : null,
-    workOrderNo: input.workOrderNo != null ? Number(input.workOrderNo) : null,
+    meterReading: input.meterReading != null && input.meterReading !== "" ? Number(input.meterReading) : null,
+    kmMeter: input.kmMeter != null && input.kmMeter !== "" ? Number(input.kmMeter) : null,
+    downtime: input.downtime != null && input.downtime !== "" ? Number(input.downtime) : null,
+    workOrderNo: input.workOrderNo != null && input.workOrderNo !== "" ? Number(input.workOrderNo) : null,
     clientRequestId: input.clientRequestId,
-    parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null ? Number(p.qty) : null })),
+    parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null && p.qty !== "" ? Number(p.qty) : null })),
   };
   const equipment = await ensureEquipment(normalized.equipmentId);
   await assertReadingsAllowed({
@@ -370,6 +370,7 @@ export async function createApproved(
     kmMeter: normalized.kmMeter,
   });
 
+  if (!normalized.date) fail("التاريخ مطلوب", 400);
   const workOrderNo = normalized.workOrderNo ?? (await nextWorkOrderNo(normalized.equipmentId));
   let effProjectId = context?.projectId ?? null;
   let effSectorId = context?.sectorId ?? null;

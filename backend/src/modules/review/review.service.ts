@@ -204,15 +204,31 @@ async function applyRecordEdits(
   userId: number,
 ) {
   const fields: readonly string[] = entity === "repairorder" ? EDITABLE_REPAIR_FIELDS : EDITABLE_NEED_FIELDS;
+  const DATE_FIELDS = new Set<string>(["date", "entryDate", "exitDate", "requestDate"]);
   const patch: Record<string, unknown> = {};
   for (const key of fields) {
     if (!(key in data)) continue;
     let value = data[key];
-    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      value = new Date(`${value}T00:00:00.000Z`);
-    } else if (NUMERIC_FIELDS.has(key) && typeof value === "string" && value.trim() !== "") {
-      const num = Number(value);
-      if (Number.isFinite(num)) value = num;
+    if (value === undefined) continue;
+    if (value === null) {
+      patch[key] = null;
+      continue;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed === "") {
+        patch[key] = null;
+        continue;
+      }
+      if (DATE_FIELDS.has(key)) {
+        const d = new Date(`${trimmed}T00:00:00.000Z`);
+        patch[key] = isNaN(d.getTime()) ? null : d;
+        continue;
+      }
+      if (NUMERIC_FIELDS.has(key)) {
+        const num = Number(trimmed);
+        value = Number.isFinite(num) ? num : null;
+      }
     }
     patch[key] = value;
   }
