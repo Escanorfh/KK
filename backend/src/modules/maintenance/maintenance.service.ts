@@ -354,12 +354,12 @@ export async function createApproved(
   const normalized: SaveInput = {
     ...input,
     equipmentId: Number(input.equipmentId),
-    meterReading: input.meterReading != null && input.meterReading !== "" ? Number(input.meterReading) : null,
-    kmMeter: input.kmMeter != null && input.kmMeter !== "" ? Number(input.kmMeter) : null,
-    downtime: input.downtime != null && input.downtime !== "" ? Number(input.downtime) : null,
-    workOrderNo: input.workOrderNo != null && input.workOrderNo !== "" ? Number(input.workOrderNo) : null,
+    meterReading: input.meterReading != null && (input.meterReading as unknown) !== "" ? Number(input.meterReading) : null,
+    kmMeter: input.kmMeter != null && (input.kmMeter as unknown) !== "" ? Number(input.kmMeter) : null,
+    downtime: input.downtime != null && (input.downtime as unknown) !== "" ? Number(input.downtime) : null,
+    workOrderNo: input.workOrderNo != null && (input.workOrderNo as unknown) !== "" ? Number(input.workOrderNo) : null,
     clientRequestId: input.clientRequestId,
-    parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null && p.qty !== "" ? Number(p.qty) : null })),
+    parts: (input.parts ?? []).map((p) => ({ ...p, qty: p.qty != null && (p.qty as unknown) !== "" ? Number(p.qty) : null })),
   };
   const equipment = await ensureEquipment(normalized.equipmentId);
   await assertReadingsAllowed({
