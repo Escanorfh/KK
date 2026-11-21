@@ -266,7 +266,7 @@ async function assertSendableRecord(tx: Prisma.TransactionClient, review: { enti
 }
 
 /** منطق الاعتماد داخل transaction واحدة — بيستخدمه الاعتماد الفردي والجماعي. */
-async function approveInTx(tx: Prisma.TransactionClient, id: number, userId: number, strict: boolean) {
+async function approveInTx(tx: Prisma.TransactionClient, id: number, userId: number, strict: boolean, workOrderOverride?: number) {
   const existing = await tx.reviewRequest.findUnique({ where: { id } });
   if (!existing) {
     if (strict) fail("سجل المراجعة غير موجود", 404);
@@ -315,7 +315,9 @@ async function approveInTx(tx: Prisma.TransactionClient, id: number, userId: num
     record = r.record as any;
     updated = r.updated;
   } else {
-    const r = await maintenanceService.createApproved(data as any, userId, context, tx);
+    const maintenanceData =
+      workOrderOverride != null ? { ...(data as any), workOrderNo: workOrderOverride } : data;
+    const r = await maintenanceService.createApproved(maintenanceData as any, userId, context, tx);
     record = r.record as any;
     updated = r.updated;
   }
@@ -394,6 +396,23 @@ async function assertAllSendable(ids: number[]) {
 export async function bulkApprove(ids: number[], userId: number) {
   const unique = [...new Set(ids)];
   await assertAllSendable(unique);
+  // توليد أرقام أوامر الشغل تسلسليًا (وليس بالتوازي) لمنع تكرار نفس الرقم
+  // ضمن المجموعة.
+  const workOrderMap = new Map<number, number>();
+  await prisma.$transaction(async (tx) => {
+    for (const id of unique) {
+      const row = await tx.reviewRequest.findUnique({ where: { id } });
+      if (!row || row.status !== "PENDING_REVIEW") continue;
+      const data = ((row.reviewedData ?? row.submittedData) ?? {}) as Record<string, unknown>;
+      const wo = data.workOrderNo;
+      if (row.entity !== "maintenance" || (wo != null && wo !== "")) continue;
+      const eqId = Number(data.equipmentId);
+      if (!Number.isFinite(eqId)) continue;
+      const next = await nextWorkOrderNo(eqId, tx);
+      if (next != null) workOrderMap.set(id, next);
+    }
+  });
+
   const results: Array<{ id: number; approved: boolean; error?: string }> = new Array(unique.length);
   let cursor = 0;
 
@@ -405,7 +424,7 @@ export async function bulkApprove(ids: number[], userId: number) {
       const id = unique[i];
       try {
         const one = await prisma.$transaction(
-          (tx) => approveInTx(tx, id, userId, false),
+          (tx) => approveInTx(tx, id, userId, false, workOrderMap.get(id)),
           { timeout: 25_000, maxWait: 10_000 },
         );
         results[i] = { id, approved: one.approved };
