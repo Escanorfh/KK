@@ -103,7 +103,7 @@ async function assertReadingsAllowed(input: {
   }
 }
 
-async function nextWorkOrderNo(equipmentId: number, db: any = prisma): Promise<number | null> {
+export async function nextWorkOrderNo(equipmentId: number, db: any = prisma): Promise<number | null> {
   const equipment = await db.equipment.findUnique({
     where: { id: equipmentId },
     select: { projectId: true, project: { select: { id: true, code: true } } },

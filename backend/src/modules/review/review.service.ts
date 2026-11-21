@@ -408,7 +408,7 @@ export async function bulkApprove(ids: number[], userId: number) {
       if (row.entity !== "maintenance" || (wo != null && wo !== "")) continue;
       const eqId = Number(data.equipmentId);
       if (!Number.isFinite(eqId)) continue;
-      const next = await nextWorkOrderNo(eqId, tx);
+      const next = await maintenanceService.nextWorkOrderNo(eqId, tx);
       if (next != null) workOrderMap.set(id, next);
     }
   });
