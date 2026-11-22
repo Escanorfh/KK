@@ -19,6 +19,7 @@ router.get("/:id", repairOrderController.get);
 router.put("/:id", validate(updateRepairOrderSchema), repairOrderController.update);
 router.post("/:id/status", validate(statusSchema), repairOrderController.changeStatus);
 router.post("/:id/send", repairOrderController.send);
+router.post("/:id/request-approval", repairOrderController.requestApproval);
 router.post("/:id/sync", repairOrderController.sync);
 router.delete("/:id", repairOrderController.remove);
 

@@ -104,6 +104,11 @@ export async function updateNeedRequest(
   }
 }
 
+export async function requestApprovalNeedRequest(id: number) {
+  const { data } = await api.post<{ review: unknown; message: string }>(`/need-requests/${id}/request-approval`);
+  return data;
+}
+
 export async function sendNeedRequest(id: number) {
   const { data } = await api.post<{ record: NeedRequest }>(`/need-requests/${id}/send`);
   return data;

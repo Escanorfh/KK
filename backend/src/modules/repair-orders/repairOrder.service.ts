@@ -650,6 +650,14 @@ export async function remove(id: number, userId: number) {
   return { message: "تم حذف طلب الإصلاح" };
 }
 
+export async function requestApproval(id: number, userId: number) {
+  const existing = await prisma.repairOrder.findUnique({ where: { id }, include: recordInclude });
+  if (!existing) fail("طلب الإصلاح غير موجود", 404);
+  if (existing.managersId || existing.sentAt) fail("تم إرسال هذا الطلب لنظام المدرين بالفعل", 409);
+  const review = await ensureRecordReview("repairorder", id, toReviewInput(existing, userId));
+  return { review, message: "تم إرسال طلب الاعتماد — بانتظار مراجعة المسؤول" };
+}
+
 export async function send(id: number, userId: number) {
   const existing = await prisma.repairOrder.findUnique({ where: { id }, include: recordInclude });
   if (!existing) fail("طلب الإصلاح غير موجود", 404);

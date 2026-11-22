@@ -344,7 +344,23 @@ const APPROVE_TX = { timeout: 55_000, maxWait: 15_000 } as const;
 
 export async function approve(id: number, userId: number) {
   const result = await prisma.$transaction((tx) => approveInTx(tx, id, userId, true), APPROVE_TX);
-  return { review: result.review, record: result.record, updated: result.updated };
+  // after approval of a repair order / need request, auto-send to managers system (best-effort)
+  let sent: boolean | null = null;
+  let sendError: string | null = null;
+  if (result.approved && (result.review?.entity === "repairorder" || result.review?.entity === "needrequest")) {
+    try {
+      if (result.review.entity === "repairorder") {
+        await (await import("../repair-orders/repairOrder.service.js")).send(result.record!.id, userId);
+      } else {
+        await (await import("../need-requests/needRequest.service.js")).send(result.record!.id, userId);
+      }
+      sent = true;
+    } catch (err) {
+      sent = false;
+      sendError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { review: result.review, record: result.record, updated: result.updated, sent, sendError };
 }
 
 /** فحص مُسبق لكل طلبات المجموعة قبل أي كتابة: لو واحد منهم اترسل للمديرين،
@@ -413,7 +429,7 @@ export async function bulkApprove(ids: number[], userId: number) {
     }
   });
 
-  const results: Array<{ id: number; approved: boolean; error?: string }> = new Array(unique.length);
+  const results: Array<{ id: number; approved: boolean; error?: string; sendError?: string }> = new Array(unique.length);
   let cursor = 0;
 
   async function worker() {
@@ -427,7 +443,20 @@ export async function bulkApprove(ids: number[], userId: number) {
           (tx) => approveInTx(tx, id, userId, false, workOrderMap.get(id)),
           { timeout: 25_000, maxWait: 10_000 },
         );
-        results[i] = { id, approved: one.approved };
+        // auto-send to managers system after approval (best-effort)
+        let sendErr: string | null = null;
+        if (one.approved && (one.review?.entity === "repairorder" || one.review?.entity === "needrequest")) {
+          try {
+            if (one.review.entity === "repairorder") {
+              await (await import("../repair-orders/repairOrder.service.js")).send(one.record!.id, userId);
+            } else {
+              await (await import("../need-requests/needRequest.service.js")).send(one.record!.id, userId);
+            }
+          } catch (err) {
+            sendErr = err instanceof Error ? err.message : String(err);
+          }
+        }
+        results[i] = { id, approved: one.approved, sendError: sendErr ?? undefined };
       } catch (err) {
         results[i] = { id, approved: false, error: (err as Error).message };
       }
@@ -440,15 +469,17 @@ export async function bulkApprove(ids: number[], userId: number) {
   const approved = results.filter((r) => r?.approved).length;
   const skipped = results.filter((r) => r && !r.approved && !r.error).length;
   const failed = results.filter((r) => r?.error).map((r) => ({ id: r.id, message: r.error! }));
+  const sendFailed = results.filter((r) => r?.approved && r?.sendError).map((r) => ({ id: r.id, message: r.sendError! }));
 
   await logAudit(userId, "ReviewRequest", 0, "UPDATE", {
     action: "BULK_APPROVE",
     count: approved,
     skipped,
     failed: failed.length,
+    sendFailed: sendFailed.length,
     ids: unique,
   });
-  return { approved, skipped, failed, total: unique.length };
+  return { approved, skipped, failed, sendFailed, total: unique.length };
 }
 
 /** حذف طلب معلّق فقط — السجل المرتبط بيتمسح معاه لو لسه مااترسلش. */

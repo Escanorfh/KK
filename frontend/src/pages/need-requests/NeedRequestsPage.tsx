@@ -14,11 +14,13 @@ import {
 } from "lucide-react";
 import { cn, todayLocal } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { isQueued } from "@/lib/offline/queue";
 import { projectOptions, listSectors, type SectorRow } from "@/services/projects";
 import {
   createNeedRequest,
   updateNeedRequest,
+  requestApprovalNeedRequest,
   sendNeedRequest,
   syncNeedRequest,
   deleteNeedRequest,
@@ -99,6 +101,8 @@ export default function NeedRequestsPage() {
   const [selected, setSelected] = useState<NeedRequest | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ROOT" || user?.role === "ADMIN";
   const [syncing, setSyncing] = useState(false);
 
   const err = (k: string) => {
@@ -247,6 +251,20 @@ export default function NeedRequestsPage() {
       setView("list");
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const handleRequestApproval = async () => {
+    if (!selected) return;
+    setSending(true);
+    try {
+      const res = await requestApprovalNeedRequest(selected.id);
+      toast.success(res.message || "تم إرسال طلب الاعتماد — بانتظار مراجعة المسؤول");
+      load();
+    } catch (e) {
+      toast.error(getApiError(e));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -745,7 +763,7 @@ export default function NeedRequestsPage() {
                         </button>
                       </>
                     )}
-                    {canSend && (
+                    {canSend && isAdmin && (
                       <button
                         onClick={handleSend}
                         disabled={sending}
@@ -753,6 +771,15 @@ export default function NeedRequestsPage() {
                       >
                         {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} إرسال إلى
                         نظام المدرين
+                      </button>
+                    )}
+                    {canSend && !isAdmin && (
+                      <button
+                        onClick={handleRequestApproval}
+                        disabled={sending}
+                        className="flex items-center gap-1.5 text-xs font-bold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 disabled:opacity-60"
+                      >
+                        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} طلب اعتماد
                       </button>
                     )}
                     {linked && (

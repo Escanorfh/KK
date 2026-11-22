@@ -486,6 +486,19 @@ export async function remove(id: number, userId: number) {
   return { message: "تم حذف طلب الاحتياج" };
 }
 
+export async function requestApproval(id: number, userId: number) {
+  const existing = await prisma.needRequest.findUnique({
+    where: { id },
+    include: { ...recordInclude, createdBy: { select: { name: true } } },
+  });
+  if (!existing) fail("طلب الاحتياج غير موجود", 404);
+  if (existing.managersId || existing.status === "SENT") {
+    fail("تم إرسال هذا الطلب لنظام المدرين بالفعل", 409);
+  }
+  const review = await ensureRecordReview("needrequest", id, toReviewInput(existing, userId));
+  return { review, message: "تم إرسال طلب الاعتماد — بانتظار مراجعة المسؤول" };
+}
+
 export async function send(id: number, userId: number) {
   const existing = await prisma.needRequest.findUnique({
     where: { id },

@@ -56,6 +56,15 @@ export async function send(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function requestApproval(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await withDbRetry(() => needRequestService.requestApproval(Number(req.params.id), req.user!.id));
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function sync(req: Request, res: Response, next: NextFunction) {
   try {
     const result = await withDbRetry(() => needRequestService.sync(Number(req.params.id), req.user!.id));

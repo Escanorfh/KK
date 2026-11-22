@@ -71,6 +71,15 @@ export async function send(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function requestApproval(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await withDbRetry(() => repairOrderService.requestApproval(Number(req.params.id), req.user!.id));
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function sync(req: Request, res: Response, next: NextFunction) {
   try {
     const result = await withDbRetry(() => repairOrderService.sync(Number(req.params.id), req.user!.id));

@@ -157,6 +157,11 @@ export async function changeRepairOrderStatus(id: number, status: RepairOrderSta
   return data;
 }
 
+export async function requestApprovalRepairOrder(id: number) {
+  const { data } = await api.post<{ review: unknown; message: string }>(`/repair-orders/${id}/request-approval`);
+  return data;
+}
+
 export async function sendRepairOrder(id: number) {
   const { data } = await api.post<{ record: RepairOrder }>(`/repair-orders/${id}/send`);
   return data;

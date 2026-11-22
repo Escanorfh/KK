@@ -344,8 +344,14 @@ export default function ReviewPage() {
     setSaving(true);
     try {
       await persistEdits(active);
-      await approveReview(active.id);
-      toast.success("تم اعتماد السجل");
+      const res = await approveReview(active.id);
+      if (res.sent === false) {
+        toast.error(`تم اعتماد السجل، لكن فشل الإرسال إلى نظام المدرين: ${res.sendError ?? ""}`);
+      } else if (res.sent === true) {
+        toast.success("تم اعتماد السجل وإرساله إلى نظام المدرين");
+      } else {
+        toast.success("تم اعتماد السجل");
+      }
       setEditing(false);
       setEditingCell(null);
       await load();
@@ -362,17 +368,24 @@ export default function ReviewPage() {
     try {
       const result = await bulkApproveReviews(g.pendingIds);
       const failed = result.failed ?? [];
+      const sendFailed = result.sendFailed ?? [];
       if (failed.length > 0) {
         toast.error(
           `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل، وتعذّر اعتماد ${NUMBER_FORMAT.format(
             failed.length,
           )}: ${failed[0].message}`,
         );
+      } else if (sendFailed.length > 0) {
+        toast.error(
+          `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل، لكن تعذّر إرسال ${NUMBER_FORMAT.format(
+            sendFailed.length,
+          )} إلى نظام المدرين: ${sendFailed[0].message}`,
+        );
       } else {
         toast.success(
           `تم اعتماد ${NUMBER_FORMAT.format(result.approved)} سجل${
             result.skipped ? ` وتجاهل ${NUMBER_FORMAT.format(result.skipped)} سجل معتمد بالفعل` : ""
-          }`,
+          }${result.approved > 0 ? " — تم الإرسال إلى نظام المدرين" : ""}`,
         );
       }
       await load();

@@ -23,7 +23,7 @@ export async function updateReview(id: number, data: Record<string, unknown>) {
 }
 
 export async function approveReview(id: number) {
-  const { data } = await api.post<{ review: ReviewRequest; record: unknown; updated: boolean }>(
+  const { data } = await api.post<{ review: ReviewRequest; record: unknown; updated: boolean; sent?: boolean | null; sendError?: string | null }>(
     `/review/${id}/approve`,
   );
   return data;
@@ -40,6 +40,7 @@ export interface BulkApproveResult {
   skipped: number;
   total: number;
   failed?: Array<{ id: number; message: string }>;
+  sendFailed?: Array<{ id: number; message: string }>;
 }
 
 export async function bulkApproveReviews(ids: number[]) {

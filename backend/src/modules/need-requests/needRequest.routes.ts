@@ -17,6 +17,7 @@ router.post("/", validate(createNeedRequestSchema), needRequestController.create
 router.get("/:id", needRequestController.get);
 router.put("/:id", validate(updateNeedRequestSchema), needRequestController.update);
 router.post("/:id/send", needRequestController.send);
+router.post("/:id/request-approval", needRequestController.requestApproval);
 router.post("/:id/sync", needRequestController.sync);
 router.delete("/:id", needRequestController.remove);
 

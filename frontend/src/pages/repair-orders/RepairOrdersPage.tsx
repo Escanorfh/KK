@@ -31,6 +31,7 @@ import {
   listRepairOrders,
   getRepairOrder,
   sendRepairOrder,
+  requestApprovalRepairOrder,
   syncRepairOrder,
   REPAIR_STATUS_LABELS,
   REPAIR_STATUS_CLS,
@@ -348,6 +349,20 @@ export default function RepairOrdersPage() {
       load();
     } catch (e) {
       toast.error(getApiError(e));
+    }
+  };
+
+  const handleRequestApproval = async () => {
+    if (!selected) return;
+    setSending(true);
+    try {
+      const res = await requestApprovalRepairOrder(selected.id);
+      toast.success(res.message || "تم إرسال طلب الاعتماد — بانتظار مراجعة المسؤول");
+      load();
+    } catch (e) {
+      toast.error(getApiError(e));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -1215,7 +1230,7 @@ export default function RepairOrdersPage() {
                       </button>
                     </>
                   )}
-                  {!selected.sentAt && !selected.managersId && (
+                  {!selected.sentAt && !selected.managersId && canManage && (
                     <button
                       onClick={handleSend}
                       disabled={sending}
@@ -1225,6 +1240,15 @@ export default function RepairOrdersPage() {
                       المدرين
                     </button>
                   )}
+                  {!selected.sentAt && !selected.managersId && !canManage && (
+                      <button
+                        onClick={handleRequestApproval}
+                        disabled={sending}
+                        className="flex items-center gap-1.5 text-xs font-bold rounded-lg bg-primary-600 text-white px-3 py-2 hover:bg-primary-700 disabled:opacity-60"
+                      >
+                        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} طلب اعتماد
+                      </button>
+                    )}
                   {selected.managersId && (
                     <button
                       onClick={handleSync}
