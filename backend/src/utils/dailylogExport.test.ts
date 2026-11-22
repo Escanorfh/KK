@@ -12,8 +12,8 @@ test("export row uses the record snapshot, not equipment.project", () => {
     sectorName: "القطاع من الملف",
     // deliberately conflicting equipment source values are NOT passed
   } as any);
-  assert.equal(row[4], "المشروع من الملف");
-  assert.equal(row[5], "القطاع من الملف");
+  assert.equal(row[14], "المشروع من الملف");
+  assert.equal(row[16], "القطاع من الملف");
 });
 
 test("export row falls back projectCode then 'غير محدد'", () => {
@@ -25,11 +25,11 @@ test("export row falls back projectCode then 'غير محدد'", () => {
     projectCode: "P-9",
     sectorName: null,
   } as any);
-  assert.equal(row[4], "P-9");
-  assert.equal(row[5], "غير محدد");
+  assert.equal(row[14], "P-9");
+  assert.equal(row[16], "غير محدد");
 });
 
 test("export headers include project and sector", () => {
-  assert.ok(DAILYLOG_CSV_HEADERS.includes("المشروع"));
+  assert.ok(DAILYLOG_CSV_HEADERS.includes("المشروع:"));
   assert.ok(DAILYLOG_CSV_HEADERS.includes("القطاع"));
 });

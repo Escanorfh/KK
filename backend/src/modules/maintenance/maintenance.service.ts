@@ -652,23 +652,35 @@ export async function remove(id: number, userId: number) {
 }
 
 const CSV_HEADERS = [
-  "رقم أمر الشغل",
+  "م",
   "التاريخ",
-  "تاريخ الخروج",
-  "كود المعدة",
-  "اسم المعدة",
+  "داخلي",
   "المشروع",
-  "القطاع",
-  "نوع أمر الشغل",
-  "نوع الصيانة",
+  "كود المعدة",
+  "المعدات",
+  "عداد الساعات",
+  "عداد الكيلومتر",
   "الورشة",
-  "العداد النهائي",
+  "تاريخ الخروج",
+  "نوع الصيانة",
+  "الوصف",
+  "الاجراء",
   "الحالة",
-  "قطع الغيار",
-  "وصف الشغل",
-  "الإجراء المتخذ",
-  "ملاحظات",
-  "المستخدم",
+  "الصيانة",
+  "المتابعة",
+  "السائق",
+  "م",
+  "الصنف",
+  "",
+  "",
+  "الكود",
+  "الــــكمــــيــــــة",
+  "",
+  "",
+  "ملاحـــظــــــــــــــات",
+  "",
+  "",
+  "",
 ];
 
 const STATUS_AR: Record<string, string> = {
@@ -696,23 +708,35 @@ export async function exportRows(params: FilterParams) {
   for (const r of rows) {
     lines.push(
       [
-        r.workOrderNo ?? "",
-        r.date.toISOString().slice(0, 10),
-        r.endDate ? r.endDate.toISOString().slice(0, 10) : "",
-        r.equipment.code,
-        r.equipment.name,
-        r.projectName ?? r.projectCode ?? "غير محدد",
-        r.sectorName ?? "غير محدد",
-        r.orderType ?? "",
-        r.maintenanceType ?? "",
-        r.workshop ?? "",
-        r.meterReading ?? "",
-        r.status ? STATUS_AR[r.status] : "",
-        (r.workParts ?? []).map((p) => (p.qty != null ? `${p.name} (${p.qty})` : p.name)).join("، "),
-        r.description ?? "",
-        r.action ?? "",
-        r.notes ?? "",
-        r.user?.name ?? "",
+        r.workOrderNo ?? r.id,                                    // 0 م
+        r.date.toISOString().slice(0, 10),                          // 1 الت日期
+        r.orderType ?? "",                                         // 2 داخلي
+        r.projectName ?? r.projectCode ?? "غير محدد",               // 3 المشروع
+        r.equipment.code,                                          // 4 كود المعدة
+        r.equipment.name,                                          // 5 المعدات
+        r.meterReading ?? "",                                      // 6 عداد الساعات
+        r.kmMeter ?? "",                                           // 7 عداد الكيلومتر
+        r.workshop ?? "",                                          // 8 الورشة
+        r.endDate ? r.endDate.toISOString().slice(0, 10) : "",      // 9 تاريخ الخروج
+        r.maintenanceType ?? "",                                   // 10 نوع الصيانة
+        r.description ?? "",                                       // 11 الوصف
+        r.action ?? "",                                            // 12 الاجراء
+        r.status ? STATUS_AR[r.status] : "",                        // 13 الحالة
+        "",                                                        // 14 الصيانة
+        "",                                                        // 15 المتابعة
+        "",                                                        // 16 السائق
+        r.workOrderNo ?? r.id,                                    // 17 م
+        (r.workParts ?? []).map((p) => p.name).join("، "),         // 18 الصنف
+        "",                                                        // 19 gap
+        "",                                                        // 20 gap
+        (r.workParts ?? []).map((p) => p.code ?? "").join("، "),   // 21 الكود
+        (r.workParts ?? []).map((p) => (p.qty != null ? p.qty : "")).join("، "), // 22 الــــكمــــيــــــة
+        "",                                                        // 23 gap
+        "",                                                        // 24 gap
+        (r.workParts ?? []).map((p) => p.notes ?? "").join("، ") || (r.notes ?? ""), // 25 ملاحـــظــــــــــــــات
+        "",                                                        // 26 gap
+        "",                                                        // 27 gap
+        "",                                                        // 28 gap
       ]
         .map(csvCell)
         .join(",")

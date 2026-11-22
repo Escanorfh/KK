@@ -7,21 +7,23 @@
  */
 
 export const DAILYLOG_CSV_HEADERS = [
-  "رقم السجل",
-  "التاريخ",
+  "م",
   "كود المعدة",
-  "اسم المعدة",
-  "المشروع",
-  "القطاع",
-  "نهاية العداد",
-  "ساعات التشغيل",
-  "الديزل",
-  "نوع الإنتاجية",
-  "عدد الإنتاجية",
   "الصلاحية",
-  "تفصيل الصلاحية",
+  "ساعات التشغيل",
+  "عداد الساعات",
+  "عداد الكياومترات",
+  "اسم السائق100",
+  "اسم السائق200",
+  "السولار",
+  "الانتاجية ",
+  "الانتاجية 3",
   "ملاحظات",
-  "المستخدم",
+  "الساعة",
+  "الكيلو",
+  "المشروع:",
+  "التاريخ",
+  "القطاع",
 ];
 
 const CONDITION_AR: Record<string, string> = {
@@ -52,21 +54,24 @@ export const UNKNOWN_CONTEXT_LABEL = "غير محدد";
 
 /** Same values the Data Day table shows, in the same order. */
 export function buildDailyLogExportRow(r: DailyLogExportRecord): unknown[] {
+  const conditionAr = r.condition ? CONDITION_AR[r.condition] ?? r.condition : "";
   return [
-    r.id,
-    r.date.toISOString().slice(0, 10),
-    r.equipment.code,
-    r.equipment.name,
-    r.projectName || r.projectCode || UNKNOWN_CONTEXT_LABEL,
-    r.sectorName || UNKNOWN_CONTEXT_LABEL,
-    r.endMeter ?? "",
-    r.operatingHours ?? "",
-    r.diesel ?? "",
-    r.productivityType ?? "",
-    r.productivityCount ?? "",
-    r.condition ? CONDITION_AR[r.condition] ?? r.condition : "",
-    r.conditionNote ?? "",
-    r.notes ?? "",
-    r.user?.name ?? "",
+    r.id,                                                          // 0 م
+    r.equipment.code,                                              // 1 كود المعدة
+    conditionAr,                                                   // 2 الصلاحية
+    r.operatingHours ?? "",                                        // 3 ساعات التشغيل
+    r.endMeter ?? "",                                              // 4 عداد الساعات
+    "",                                                            // 5 عداد الكياومترات
+    "",                                                            // 6 اسم السائق100
+    "",                                                            // 7 اسم السائق200
+    r.diesel ?? "",                                                // 8 السولار
+    r.productivityCount ?? r.productivityType ?? "",                // 9 الانتاجية
+    "",                                                            // 10 الانتاجية 3
+    r.notes ?? "",                                                 // 11 ملاحظات
+    "",                                                            // 12 الساعة
+    "",                                                            // 13 الكيلو
+    r.projectName || r.projectCode || UNKNOWN_CONTEXT_LABEL,        // 14 المشروع:
+    r.date.toISOString().slice(0, 10),                             // 15 الت日期
+    r.sectorName || UNKNOWN_CONTEXT_LABEL,                         // 16 القطاع
   ];
 }
