@@ -340,7 +340,7 @@ async function approveInTx(tx: Prisma.TransactionClient, id: number, userId: num
 // الاعتماد بيعمل عشرات الاستعلامات (قراءة المعدة، العدّادات، المشروع، القطاع، تدقيق...)
 // والـ transaction الافتراضية في Prisma بتقفل بعد 5 ثواني — وده كان بيرجّع 500 على السجلات
 // اللي فيها خطوات زيادة. النافذة هنا مفتوحة لحد 55 ثانية (سقف دالة Vercel = 60).
-const APPROVE_TX = { timeout: 55_000, maxWait: 15_000 } as const;
+const APPROVE_TX = { timeout: 58_000, maxWait: 20_000 } as const;
 
 export async function approve(id: number, userId: number) {
   const result = await prisma.$transaction((tx) => approveInTx(tx, id, userId, true), APPROVE_TX);
