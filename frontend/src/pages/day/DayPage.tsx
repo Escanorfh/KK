@@ -576,6 +576,12 @@ export default function DayPage() {
                 )}
               </div>
 
+              {form.equipmentId && (
+                <p className="text-[11px] text-slate-500 mt-1">
+                  وضع التتبع: <b>{TRACKING_MODE_LABELS[form.trackingMode]}</b>
+                </p>
+              )}
+
               {showSuggestions && suggestions.length > 0 && (
                 <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
                   {suggestions.map((eq) => (
@@ -633,21 +639,6 @@ export default function DayPage() {
                     تسجيل المعدة
                   </button>
                 </div>
-              )}
-            </div>
-
-            <div>
-              <label className={labelCls}>اسم المعدة</label>
-              <input
-                value={form.equipmentName}
-                readOnly
-                placeholder="يُملأ تلقائيًا من الكود"
-                className={cn(inputCls, "bg-slate-50 text-slate-600")}
-              />
-              {form.equipmentId && (
-                <p className="text-[11px] text-slate-500 mt-1">
-                  وضع التتبع: <b>{TRACKING_MODE_LABELS[form.trackingMode]}</b>
-                </p>
               )}
             </div>
 
