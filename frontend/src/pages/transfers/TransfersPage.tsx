@@ -12,7 +12,7 @@ import {
   type Transfer,
 } from "@/services/transfers";
 import { listSectors, projectOptions } from "@/services/projects";
-import { lookupEquipment } from "@/services/equipments";
+import { lookupEquipment, syncEquipmentsFromManagers } from "@/services/equipments";
 import type { Project } from "@/types";
 
 const inputCls = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500";
@@ -58,7 +58,12 @@ export default function TransfersPage() {
     }
   }, [q, statusFilter, projectFilter]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void (async () => {
+      try { await syncEquipmentsFromManagers(); } catch { /* ignore */ }
+      void load();
+    })();
+  }, [load]);
 
   return (
     <div className="space-y-5">
