@@ -748,9 +748,9 @@ export default function ProjectsPage() {
             )}
 
             <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600 leading-relaxed">
-              كل قطاع هنا لازم يتربط بقطاع نظام المدرين (room_id) عشان طلبات الاحتياج تقدر تُرسل — القطاعات بتتجلب
-              وتترابط أوتوماتيك مع كل مزامنة للمشاريع (بالاعتماد على معرّف الغرفة، مش التشابه في الأسماء)، والموجود
-              هنا بيدوي بيفضل زي ما هو.
+              كل قطاع هنا لازم يتربط بقطاع من قائمة قطاعات طلبات الاحتياج عند المدرين (room_id) عشان الطلبات تقدر
+              تُرسل — القطاعات بتتجلب وتترابط أوتوماتيك من <bdi className="font-mono">/requisitions/sectors</bdi> مع كل
+              مزامنة للمشاريع (بمعرّف القطاع، مش التشابه في الأسماء)، والموجود هنا يدويًا بيفضل زي ما هو.
               {managersWarning && (
                 <span className="block mt-1 text-amber-700 font-semibold">{managersWarning}</span>
               )}

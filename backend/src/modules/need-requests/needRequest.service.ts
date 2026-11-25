@@ -12,7 +12,7 @@ import {
   getRequisition,
   managersDate,
   mapRequisitionDepartment,
-  resolveAuthorizedRoom,
+  resolveSendSector,
   resolveManagersProject,
   requisitionStatusLabel,
   updateRequisition,
@@ -519,7 +519,7 @@ export async function send(id: number, userId: number) {
 
   try {
     const remoteProject = await resolveManagersProject(existing.project);
-    const room = resolveAuthorizedRoom(remoteProject, sector);
+    const room = await resolveSendSector(sector);
     const payload = buildCreatePayload(existing, remoteProject, room);
     remoteCreated = await createRequisition(payload);
 

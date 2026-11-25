@@ -1,5 +1,6 @@
 const TIMEOUT_MS = 20000;
 const PROJECTS_TTL_MS = 5 * 60 * 1000;
+const SECTORS_TTL_MS = 5 * 60 * 1000;
 
 export class ManagersApiError extends Error {
   status: number;
@@ -29,6 +30,15 @@ export interface ManagersProject {
   rooms: ManagersRoom[];
 }
 
+/** قطاع طلبات احتياج مصرّح به للتوكن — من /requisitions/sectors (وليس غرف المشروع) */
+export interface ManagersSector {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  sortOrder: number | null;
+}
+
 export interface ManagersRequisition {
   id: number;
   requisition_number: string;
@@ -50,6 +60,13 @@ export interface ManagersProjectMatch {
 type JsonRecord = Record<string, unknown>;
 
 let projectsCache: { expiresAt: number; data: ManagersProject[] } | null = null;
+let sectorsCache: { expiresAt: number; data: ManagersSector[] } | null = null;
+
+/** يمسح كاش المشاريع والقطاعات — للاختبارات أو بعد تحديث الإعدادات */
+export function clearManagersCache() {
+  projectsCache = null;
+  sectorsCache = null;
+}
 
 function config() {
   const baseUrl = (process.env.MANAGERS_API_URL || "").trim().replace(/\/+$/, "");
@@ -215,6 +232,47 @@ export async function managersProjects(force = false): Promise<ManagersProject[]
 
   projectsCache = { expiresAt: Date.now() + PROJECTS_TTL_MS, data: projects };
   return projects;
+}
+
+function readSector(raw: JsonRecord): ManagersSector | null {
+  const id = toInt(raw.id);
+  const name = toText(raw.name) ?? toText(raw.title);
+  if (!id || !name) return null;
+  return {
+    id,
+    name,
+    code: toText(raw.code),
+    description: toText(raw.description),
+    sortOrder: toInt(raw.sort_order),
+  };
+}
+
+/**
+ * قطاعات طلبات الاحتياج المصرّح بها للتوكن من /requisitions/sectors.
+ * دي المصدر الصحيح لمعرّف القطاع اللي بيتبعت كـ room_id — مش غرف المشروع.
+ */
+export async function managersSectors(force = false): Promise<ManagersSector[]> {
+  if (!force && sectorsCache && sectorsCache.expiresAt > Date.now()) {
+    return sectorsCache.data;
+  }
+
+  const body = await request<JsonRecord>("/requisitions/sectors");
+  const rawSectors = Array.isArray(body.sectors)
+    ? body.sectors
+    : body.data && Array.isArray((body.data as JsonRecord).sectors)
+      ? ((body.data as JsonRecord).sectors as unknown[])
+      : Array.isArray(body.data)
+        ? (body.data as unknown[])
+        : [];
+
+  const sectors = rawSectors
+    .map((item) => (item && typeof item === "object" ? readSector(item as JsonRecord) : null))
+    .filter((item): item is ManagersSector => item !== null);
+
+  const unique = new Map<number, ManagersSector>();
+  for (const sector of sectors) if (!unique.has(sector.id)) unique.set(sector.id, sector);
+  sectorsCache = { expiresAt: Date.now() + SECTORS_TTL_MS, data: [...unique.values()] };
+  return sectorsCache.data;
 }
 
 const DIACRITICS = /[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g;
@@ -564,4 +622,34 @@ export function resolveAuthorizedRoom(
     );
   }
   return room;
+}
+
+/**
+ * يتحقق من ربط القطاع المحلي مقابل قطاعات طلبات الاحتياج المصرّح بها للتوكن
+ * (/requisitions/sectors) ويرجّع المعرّف اللي يتبعت كـ room_id.
+ * لو تعذّر جلب القائمة (شبكة/إعدادات) بنكمل بالمعرّف المخزّن — سلوك الإرسال القديم.
+ */
+export async function resolveSendSector(
+  sector: LocalSectorForManagers
+): Promise<ManagersRoom> {
+  assertSectorSendable(sector);
+  const roomId = sector.managersRoomId as number;
+  let sectors: ManagersSector[] = [];
+  try {
+    sectors = await managersSectors();
+  } catch {
+    return { id: roomId, title: sector.managersRoomTitle ?? sector.name };
+  }
+  if (!sectors.length) {
+    return { id: roomId, title: sector.managersRoomTitle ?? sector.name };
+  }
+  const hit = sectors.find((item) => item.id === roomId);
+  if (!hit) {
+    const available = sectors.map((item) => `«${item.name}» (${item.id})`).join("، ");
+    throw new ManagersApiError(
+      `القطاع «${sector.managersRoomTitle ?? sector.name}» (معرّف ${roomId}) مش ضمن القطاعات المصرّح بها للتوكن في نظام المدرين. المتاحة: ${available}`,
+      422
+    );
+  }
+  return { id: hit.id, title: hit.name };
 }

@@ -2,7 +2,13 @@ import type { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { logAudit } from "../../utils/audit";
 import { lastDayEquipmentCounts } from "../../utils/lastDayEquipment";
-import { normalizeArabic, resolveManagersProject, type ManagersRoom } from "../../utils/managers";
+import {
+  managersSectors,
+  normalizeArabic,
+  resolveManagersProject,
+  type ManagersRoom,
+  type ManagersSector,
+} from "../../utils/managers";
 import { mapPrismaError } from "../../utils/prismaError";
 import {
   normalizeSectorName,
@@ -526,7 +532,8 @@ export async function remove(id: number, userId: number) {
   return { message: "تم حذف القطاع" };
 }
 
-// القطاعات المصرّح بها للتوكن عند المدرين للمشروع المحلي — للمراجعة البشرية قبل الربط
+// القطاعات المصرّح بها للتوكن عند المدرين — للمراجعة البشرية قبل الربط.
+// المصدر هو /requisitions/sectors (قطاعات طلبات الاحتياج)، مش غرف المشروع.
 export async function managersRooms(projectId: number, scope?: number[] | null) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -544,9 +551,15 @@ export async function managersRooms(projectId: number, scope?: number[] | null) 
   try {
     const matched = await resolveManagersProject({ name: project.name, code: project.code });
     remoteProject = { id: matched.id, title: matched.title, code: matched.code };
-    rooms = matched.rooms;
+  } catch (err) {
+    warning = err instanceof Error ? err.message : String(err);
+  }
+
+  try {
+    const sectors = await managersSectors();
+    rooms = sectors.map((sector) => ({ id: sector.id, title: sector.name }));
     if (!rooms.length) {
-      warning = `المشروع «${matched.title}» مربوط، لكن التوكن الحالي لا يملك أي قطاع مصرّح به فيه`;
+      warning = warning ?? "لا توجد قطاعات طلبات احتياج مصرّح بها للتوكن في نظام المدرين";
     }
   } catch (err) {
     warning = err instanceof Error ? err.message : String(err);
@@ -555,25 +568,11 @@ export async function managersRooms(projectId: number, scope?: number[] | null) 
   return { project, remoteProject, rooms, warning };
 }
 
-// الربط يدوي ومراجع: معرّف قطاع المدرين وبيتهخزّن من القائمة المصرّح بها، مش من تشابه الأسماء
+// الربط يدوي ومراجع: معرّف القطاع من قائمة /requisitions/sectors المصرّح بها للتوكن
 export async function linkManagersRoom(id: number, managersRoomId: number | null, userId: number) {
   const sector = await prisma.sector.findUnique({
     where: { id },
-    select: {
-      id: true,
-      name: true,
-      projectId: true,
-      project: { select: { name: true } },
-      projectSectors: {
-        orderBy: { projectId: "asc" },
-        select: {
-          id: true,
-          projectId: true,
-          active: true,
-          project: { select: { name: true } },
-        },
-      },
-    },
+    select: { id: true, name: true },
   });
   if (!sector) fail("القطاع غير موجود", 404);
 
@@ -586,42 +585,28 @@ export async function linkManagersRoom(id: number, managersRoomId: number | null
     return cleared;
   }
 
-  // المشروع بيتحدد من الربط النشط أولًا؛ العمود القديم بديل فقط لما مفيش أي صف ربط خالص.
-  // وجود ربط ملغي يمنع الرجوع للعمود القديم (نفس القاعدة الانتقالية).
-  let projectId: number | null = null;
-  let projectName = "";
-  const links = sector.projectSectors ?? [];
-  if (links.length > 0) {
-    const active = links.find((link) => link.active);
-    if (!active) {
-      fail("القطاع غير مرتبط بأي مشروع نشط — أعد ربطه بمشروع أولًا", 422);
-    }
-    projectId = active.projectId;
-    projectName = active.project?.name ?? "";
-  } else if (sector.projectId != null) {
-    projectId = sector.projectId;
-    projectName = sector.project?.name ?? "";
-  } else {
-    fail("القطاع غير مربوط بمشروع — cannot link managers room without project", 422);
+  let sectors: ManagersSector[];
+  try {
+    sectors = await managersSectors();
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err), 502);
   }
-
-  const { rooms } = await managersRooms(projectId);
-  const room = rooms.find((item) => item.id === managersRoomId);
+  const room = sectors.find((item) => item.id === managersRoomId);
   if (!room) {
     fail(
-      `قطاع نظام المدرين بمعرّف ${managersRoomId} ليس ضمن القطاعات المصرّح بها لمشروع «${projectName}»`,
+      `قطاع نظام المدرين بمعرّف ${managersRoomId} ليس ضمن القطاعات المصرّح بها للتوكن`,
       422
     );
   }
 
   const updated = await prisma.sector.update({
     where: { id },
-    data: { managersRoomId: room!.id, managersRoomTitle: room!.title },
+    data: { managersRoomId: room.id, managersRoomTitle: room.name },
   });
   await logAudit(userId, "Sector", id, "UPDATE", {
     name: sector.name,
-    managersRoomId: room!.id,
-    managersRoomTitle: room!.title,
+    managersRoomId: room.id,
+    managersRoomTitle: room.name,
   });
   return updated;
 }
@@ -646,10 +631,11 @@ type SyncSector = {
 };
 
 /**
- * مزامنة قطاعات مشروع مع الغرف المصرّح بها عنده عند المدرين (rooms[] من /requisitions/projects):
- * المطابقة بمعرّف الغرفة أولًا، وبعدين بالاسم الحرفي داخل نفس المشروع — التشابه التقريبي ما كانش يومًا مصدر ربط.
- * مافيش حذف ولا إعادة تسمية لقطاع موجود؛ الغرفة اللي ملهاش قطاع بتتعمل جديدة وهي مربوطة،
- * والقطاع المربوط بغرفة اتسحبت من التصريح بيفضل زي ما هو وبيتبلّغ عنه للمراجعة.
+ * مزامنة قطاعات مشروع مع قائمة قطاعات طلبات الاحتياج المصرّح بها للتوكن
+ * (/requisitions/sectors، وليس rooms[] الخاصة بالمشروع):
+ * المطابقة بمعرّف القطاع أولًا، وبعدين بالاسم الحرفي داخل نفس المشروع — التشابه التقريبي ما كانش يومًا مصدر ربط.
+ * مافيش حذف ولا إعادة تسمية لقطاع موجود؛ القطاع اللي ملهوش مقابل بيتبلّغ عنه للمراجعة.
+ * معرّف القطاع الخارجي (managersRoomId) هو نفس id القطاع من /requisitions/sectors.
  *
  * القطاعات بتتقرأ من روابط ProjectSector الخاصة بالمشروع (نشطة أو ملغية) + القطاعات القديمة
  * اللي ملهاش أي صف ربط خالص — عشان القطاع المشترك مع مشروع تاني يفضل قابل للاكتشاف.

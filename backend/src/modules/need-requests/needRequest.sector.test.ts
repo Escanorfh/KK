@@ -34,8 +34,15 @@ const REMOTE_PROJECTS = [
   },
   // مشروع بغرفة ضمنية بس، من غير مصفوفة rooms — شكل أغلب مشاريع المدرين
   { id: 42, title: "خط طرد الرحلة", code: "TL", status: "active", room_id: 91, room_title: "قطاع التشغيل" },
-  // مشروع التوكن مالوش قطاع مصرّح عليه
+  // مشروع التوكن مالوش قطاع مصرّح عليه ضمن rooms
   { id: 43, title: "مخزون الطوارئ", code: "EM", status: "active" },
+];
+
+// /requisitions/sectors — دي القطاعات المصرّح بها للتوكن، ومعرّفها هو اللي بيتبعت كـ room_id
+const REMOTE_SECTORS = [
+  { id: 77, name: "قطاع المخازن", code: "S1", description: "مخازن", color: "#0d6efd", sort_order: 1 },
+  { id: 88, name: "قطاع الورشة", code: "S2", description: "ورشة", color: "#0d6efd", sort_order: 2 },
+  { id: 91, name: "قطاع التشغيل", code: "S3", description: "تشغيل", color: "#0d6efd", sort_order: 3 },
 ];
 
 interface CapturedRequest {
@@ -46,6 +53,8 @@ interface CapturedRequest {
 
 let posts: CapturedRequest[] = [];
 let requests: CapturedRequest[] = [];
+/** لاختبار فشل /requisitions/sectors */
+let sectorsDown = false;
 const baseUrl = "http://127.0.0.1:9/api";
 const originalFetch = globalThis.fetch;
 let fetchInstalled = false;
@@ -86,6 +95,17 @@ async function fakeManagersFetch(
       worker_name: "EFMS",
       total: REMOTE_PROJECTS.length,
       projects: REMOTE_PROJECTS,
+    });
+  }
+
+  if (pathname === "/api/requisitions/sectors") {
+    if (sectorsDown) return jsonResponse(500, { ok: false, message: "sectors endpoint down" });
+    return jsonResponse(200, {
+      ok: true,
+      worker_name: "EFMS",
+      total: REMOTE_SECTORS.length,
+      sectors: REMOTE_SECTORS,
+      names: REMOTE_SECTORS.map((s) => s.name),
     });
   }
 
@@ -381,15 +401,21 @@ test("٤ب) الربط مراجع لكن مش ضمن قطاعات المشروع
   assert.equal(posts.length, 0);
 });
 
-test("٤ج) مشروع التوكن مالوش قطاع عنده → رفض محلي بيفصّل السبب", async () => {
+test("٤ج) ربط بمعرّف قطاع غير موجود في قائمة المصرّح به → رفض محلي بيفصّل السبب", async () => {
   const { mod } = await install({
-    need: { projectId: 13, project: { id: 13, name: "مخزون الطوارئ", code: "EM" } },
-    sector: sectorOf({ projectId: 13, managersRoomId: 999, managersRoomTitle: "قطاع وهمي" }),
+    need: {
+      projectId: 13,
+      project: { id: 13, name: "مخزون الطوارئ", code: "EM" },
+      sectorId: 9,
+      sector: sectorOf({ id: 9, projectId: 13, managersRoomId: 999, managersRoomTitle: "قطاع وهمي" }),
+    },
   });
   posts = [];
   const err = await mod.send(100, 1).then(() => null, (e: unknown) => e as Error & { status?: number });
   assert.ok(err);
-  assert.match(err!.message, /لا توجد قطاعات مصرّح بها لهذا المشروع/);
+  assert.equal(err!.status, 422, err!.message);
+  assert.match(err!.message, /مش ضمن القطاعات المصرّح بها/);
+  assert.match(err!.message, /قطاع المخازن/);
   assert.equal(posts.length, 0);
 });
 
@@ -416,15 +442,20 @@ test("٥ب) إرسال قطاع صريح مش تابع للمشروع الجدي
   assert.match(err!.message, /لا يتبع المشروع المحدد/);
 });
 
-test("٦) مشروع بلا قطاعات → القائمة ترجع فاضية ورسالة توضّح إن مافيش قطاع مصرّح به", async () => {
+test("٦) القطاعات بتتجلب من /requisitions/sectors وبتظهر كخيارات ربط للمشروع", async () => {
   await startMockManagers();
   const sectorMod = await import("../sectors/sector.service.js");
   plant({ project: { findUnique: async () => ({ id: 13, name: "مخزون الطوارئ", code: "EM" }) }, sector: { findMany: async () => [] } });
 
   const res = await sectorMod.managersRooms(13);
-  assert.deepEqual(res.rooms, [], "التوكن مالوش قطاع على المشروع ده");
+  assert.deepEqual(
+    res.rooms.map((r) => r.id).sort((a, b) => a - b),
+    [77, 88, 91],
+    "كل القطاعات المصرّح بها للتوكن متاحة"
+  );
+  assert.equal(res.rooms.find((r) => r.id === 88)?.title, "قطاع الورشة");
   assert.equal(res.remoteProject?.id, 43, "المشروع نفسه اتطابق صح");
-  assert.match(res.warning!, /لا يملك أي قطاع مصرّح به/);
+  assert.equal(res.warning, null);
 
   const { mod } = await install({ need: { sectorId: null, sector: null } });
   posts = [];
@@ -474,49 +505,31 @@ test("٦ج) الربط اليدوي بيقبل معرّف من القائمة ا
   assert.equal((cleared as any).managersRoomTitle, null);
 });
 
-test("٦د) ربط المدرين بيختار المشروع من الربط النشط قبل العمود القديم", async () => {
+test("٦د) ربط المدرين بيستخدم قائمة /requisitions/sectors ويخزّن الاسم من عند المدرين", async () => {
   await startMockManagers();
   const managers = await import("../../utils/managers.js");
   await managers.managersProjects(true);
+  await managers.managersSectors(true);
   const sectorMod = await import("../sectors/sector.service.js");
-  const lookedUp: number[] = [];
   plant({
-    project: {
-      findUnique: async ({ where }: { where: { id: number } }) => {
-        lookedUp.push(where.id);
-        return where.id === 11 ? PROJECT : null;
-      },
-    },
     sector: {
-      findUnique: async () => ({
-        id: 7,
-        name: "المخازن",
-        projectId: 13,
-        project: { name: "مشروع قديم" },
-        projectSectors: [{ id: 55, projectId: 11, active: true, project: { name: PROJECT.name } }],
-      }),
+      findUnique: async () => ({ id: 7, name: "المخازن" }),
       update: async ({ data }: { data: Record<string, unknown> }) => ({ id: 7, ...data }),
     },
   });
 
   const linked = await sectorMod.linkManagersRoom(7, 88, 1);
   assert.equal((linked as any).managersRoomId, 88);
-  assert.deepEqual(lookedUp, [11], "المشروع جه من الربط النشط مش من العمود القديم");
+  assert.equal((linked as any).managersRoomTitle, "قطاع الورشة", "الاسم من قائمة القطاعات مش من العميل");
 });
 
-test("٦هـ) قطاع بربط ملغي فقط → 422 قبل أي نداء للمدرين", async () => {
+test("٦هـ) معرّف مش ضمن قائمة /requisitions/sectors → 422 من غير أي تحديث", async () => {
   await startMockManagers();
   const sectorMod = await import("../sectors/sector.service.js");
   let updates = 0;
   plant({
     sector: {
-      findUnique: async () => ({
-        id: 7,
-        name: "المخازن",
-        projectId: 11,
-        project: { name: PROJECT.name },
-        projectSectors: [{ id: 55, projectId: 11, active: false, project: { name: PROJECT.name } }],
-      }),
+      findUnique: async () => ({ id: 7, name: "المخازن" }),
       update: async () => {
         updates++;
         return null;
@@ -525,35 +538,34 @@ test("٦هـ) قطاع بربط ملغي فقط → 422 قبل أي نداء ل�
   });
 
   const err = await sectorMod
-    .linkManagersRoom(7, 88, 1)
+    .linkManagersRoom(7, 606, 1)
     .then(() => null, (e: unknown) => e as Error & { status?: number });
   assert.ok(err);
   assert.equal(err!.status, 422);
-  assert.match(err!.message, /غير مرتبط بأي مشروع نشط/);
+  assert.match(err!.message, /ليس ضمن القطاعات المصرّح بها/);
   assert.equal(updates, 0, "مافيش تحديث على القطاع");
 });
 
-test("٦و) قطاع بلا أي ربط وبلا أصل قديم → 422", async () => {
+test("٦و) تعذّر جلب قائمة القطاعات → خطأ 502 واضح", async () => {
   await startMockManagers();
+  const managers = await import("../../utils/managers.js");
+  managers.clearManagersCache();
+  sectorsDown = true;
   const sectorMod = await import("../sectors/sector.service.js");
   plant({
     sector: {
-      findUnique: async () => ({
-        id: 7,
-        name: "المخازن",
-        projectId: null,
-        project: null,
-        projectSectors: [],
-      }),
+      findUnique: async () => ({ id: 7, name: "المخازن" }),
+      update: async () => null,
     },
   });
 
   const err = await sectorMod
     .linkManagersRoom(7, 88, 1)
     .then(() => null, (e: unknown) => e as Error & { status?: number });
+  sectorsDown = false;
+  managers.clearManagersCache();
   assert.ok(err);
-  assert.equal(err!.status, 422);
-  assert.match(err!.message, /غير مربوط بمشروع/);
+  assert.equal(err!.status, 502);
 });
 
 test("٧) طلب قديم بلا قطاع — القراءة والتعديل بيمشوا عادي، والإرسال يترفض محليًا برسالة", async () => {

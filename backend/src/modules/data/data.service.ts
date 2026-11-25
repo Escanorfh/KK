@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import type { WorkStatus, WorkType, Condition } from "@prisma/client";
 import prisma from "../../config/prisma";
-import { managersProjects, normalizeArabic } from "../../utils/managers";
+import { managersProjects, managersSectors, normalizeArabic } from "../../utils/managers";
 import { ensureSectorLink, syncSectorsForProject } from "../sectors/sector.service";
 import { withDbRetry } from "../../utils/db";
 import {
@@ -1787,7 +1787,8 @@ export interface ManagersSectorsSyncSummary {
 /**
  * جلب كل مشاريع نظام المدرين (/requisitions/projects) ومزامنتها مع المشاريع المحلية:
  * المطابقة بالكود أولًا ثم بالاسم (بعد التطبيع العربي) — المشروع الموجود بيتحدّث واللي مش موجود بيتعمل جديد.
- * ومع كل مشروع بتتجلب قطاعاته المصرّح بها (rooms[]) وتترابط به (انظر syncSectorsForProject).
+ * والقطاعات بتتجلب من /requisitions/sectors وبتترابط بكل المشاريع (انظر syncSectorsForProject)،
+ * لأن معرّف القطاع ده هو اللي بيتبعت كـ room_id في طلبات الاحتياج.
  * لو حصل أي تغيير بيتتسجّل في سجل الاستيراد عشان يظهر في «إدارة البيانات» ويتمكّن ROOT من حذفه.
  */
 export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncResult> {
@@ -1800,6 +1801,16 @@ export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncRe
     sectors: { created: 0, linked: 0, unchanged: 0, skipped: 0, stale: 0, error: null },
   };
   const createdIds: number[] = [];
+
+  // القطاعات بتيجي من /requisitions/sectors — دي القطاعات المصرّح بها للتوكن
+  // ومعرّفها هو اللي يتبعت كـ room_id عند إنشاء طلب احتياج.
+  let remoteRooms: { id: number; title: string }[] | null = null;
+  try {
+    const sectors = await managersSectors(true);
+    remoteRooms = sectors.map((sector) => ({ id: sector.id, title: sector.name }));
+  } catch (err) {
+    result.sectors.error = err instanceof Error ? err.message : String(err);
+  }
 
   const local = await prisma.project.findMany({ select: { id: true, code: true, name: true } });
   const byCode = new Map<string, (typeof local)[number]>();
@@ -1842,15 +1853,17 @@ export async function syncProjectsFromManagers(): Promise<ManagersProjectsSyncRe
     }
 
     // مزامنة القطاعات ما توقّفش مزامنة المشاريع: أي فشل بيتبلّغ في النتيجة ونكمّل
-    try {
-      const sectors = await syncSectorsForProject(localId, r.rooms);
-      result.sectors.created += sectors.created;
-      result.sectors.linked += sectors.linked;
-      result.sectors.unchanged += sectors.unchanged;
-      result.sectors.skipped += sectors.skipped.length;
-      result.sectors.stale += sectors.stale.length;
-    } catch (err) {
-      result.sectors.error = err instanceof Error ? err.message : String(err);
+    if (remoteRooms) {
+      try {
+        const sectors = await syncSectorsForProject(localId, remoteRooms);
+        result.sectors.created += sectors.created;
+        result.sectors.linked += sectors.linked;
+        result.sectors.unchanged += sectors.unchanged;
+        result.sectors.skipped += sectors.skipped.length;
+        result.sectors.stale += sectors.stale.length;
+      } catch (err) {
+        result.sectors.error = err instanceof Error ? err.message : String(err);
+      }
     }
   }
 
