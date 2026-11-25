@@ -42,5 +42,6 @@ export const ALERT_FILTER_VALUES = [
 export const alertsQuerySchema = z.object({
   status: z.enum(ALERT_FILTER_VALUES).optional(),
   projectId: z.coerce.number().int().positive().optional(),
+  sectorId: z.coerce.number().int().positive().optional(),
   q: z.string().trim().optional(),
 });

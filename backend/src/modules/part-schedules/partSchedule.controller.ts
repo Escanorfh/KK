@@ -39,6 +39,7 @@ export async function remove(req: Request, res: Response, next: NextFunction) {
 type AlertsQuery = {
   status?: "OIL_AND_FILTER" | "OIL" | "FILTER" | "SAFE" | "UNKNOWN" | "OIL_DUE";
   projectId?: number;
+  sectorId?: number;
   q?: string;
   scope?: number[] | null;
 };

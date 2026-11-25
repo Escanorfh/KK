@@ -18,7 +18,7 @@ import {
 } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import { getApiError } from "@/lib/api";
-import { projectOptions } from "@/services/projects";
+import { projectOptions, listSectors } from "@/services/projects";
 import {
   getPartAlerts,
   type AlertStatusFilter,
@@ -309,8 +309,10 @@ export default function OilAlertsPage() {
   const { user } = useAuth();
   const canReview = user?.role === "ROOT" || user?.role === "ADMIN";
   const [projects, setProjects] = useState<Awaited<ReturnType<typeof projectOptions>>>([]);
+  const [sectors, setSectors] = useState<Awaited<ReturnType<typeof listSectors>>>([]);
   const [status, setStatus] = useState<"" | AlertStatusFilter>("");
   const [projectId, setProjectId] = useState<number | "">("");
+  const [sectorId, setSectorId] = useState<number | "">("");
   const [q, setQ] = useState("");
   const [qDebounced, setQDebounced] = useState("");
   const [rows, setRows] = useState<Awaited<ReturnType<typeof getPartAlerts>>["rows"]>([]);
@@ -326,6 +328,16 @@ export default function OilAlertsPage() {
   }, []);
 
   useEffect(() => {
+    if (projectId === "") {
+      setSectors([]);
+      setSectorId("");
+      return;
+    }
+    listSectors(projectId).then(setSectors).catch(() => setSectors([]));
+    setSectorId("");
+  }, [projectId]);
+
+  useEffect(() => {
     const timer = setTimeout(() => setQDebounced(q.trim()), 300);
     return () => clearTimeout(timer);
   }, [q]);
@@ -336,6 +348,7 @@ export default function OilAlertsPage() {
       const res = await getPartAlerts({
         status: status || undefined,
         projectId: projectId === "" ? undefined : projectId,
+        sectorId: sectorId === "" ? undefined : sectorId,
         q: qDebounced || undefined,
       });
       setRows(res.rows);
@@ -347,7 +360,7 @@ export default function OilAlertsPage() {
       setLoading(false);
       firstLoad.current = false;
     }
-  }, [status, projectId, qDebounced]);
+  }, [status, projectId, sectorId, qDebounced]);
 
   useEffect(() => {
     load();
@@ -520,6 +533,22 @@ export default function OilAlertsPage() {
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>القطاع</label>
+            <select
+              value={sectorId}
+              onChange={(e) => setSectorId(e.target.value === "" ? "" : Number(e.target.value))}
+              className={cn(inputCls, "w-full")}
+              disabled={projectId === ""}
+            >
+              <option value="">كل القطاعات</option>
+              {sectors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
                 </option>
               ))}
             </select>

@@ -563,6 +563,7 @@ export function buildServiceHistory(
 export async function alerts(params: {
   status?: OverallStatus | "OIL_DUE" | "MODE_UNCONFIRMED";
   projectId?: number;
+  sectorId?: number;
   q?: string;
   scope?: number[] | null;
 }) {
@@ -570,6 +571,7 @@ export async function alerts(params: {
   const equipment = await prisma.equipment.findMany({
     where: {
       ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(params.sectorId ? { sectorId: params.sectorId } : {}),
       ...(own ? { OR: own } : {}),
       ...(params.q
         ? {

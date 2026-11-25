@@ -108,7 +108,7 @@ export interface AlertsResponse {
 }
 
 export async function getPartAlerts(
-  params: { status?: AlertStatusFilter; projectId?: number; q?: string } = {}
+  params: { status?: AlertStatusFilter; projectId?: number; sectorId?: number; q?: string } = {}
 ) {
   const { data } = await api.get<AlertsResponse>("/part-schedules/alerts", { params });
   return data;
