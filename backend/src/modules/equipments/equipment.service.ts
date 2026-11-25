@@ -992,11 +992,11 @@ function extractList(json: unknown): Record<string, unknown>[] {
 }
 
 function projectNameOf(raw: Record<string, unknown>): string | null {
-  for (const key of ["project_name", "project", "projectName", "المشروع"]) {
+  for (const key of ["project_name", "project", "projectName", "المشروع", "project_title"]) {
     const v = raw[key];
     if (typeof v === "string" && v.trim()) return v.trim();
     if (v && typeof v === "object") {
-      const name = pickStr(v as Record<string, unknown>, ["name", "اسم", "title"]);
+      const name = pickStr(v as Record<string, unknown>, ["name", "اسم", "title", "project_name", "project_title"]);
       if (name) return name;
     }
   }
@@ -1119,7 +1119,12 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
     const name =
       pickStr(raw, ["equipment_type", "name", "equipmentName", "equipment_name", "اسم", "اسم_المعدة"]) || code;
     const projName = projectNameOf(raw);
-    const sectorName = pickStr(raw, ["sector", "القطاع", "sector_name"]);
+    const sectorRaw = raw.sector ?? raw.sector_name ?? raw["القطاع"] ?? raw.sectorName;
+    const sectorName = typeof sectorRaw === "string"
+      ? (sectorRaw.trim() || null)
+      : (sectorRaw && typeof sectorRaw === "object"
+          ? pickStr(sectorRaw as Record<string, unknown>, ["name", "title", "sector_name", "sectorName"])
+          : null);
 
     try {
       const projectId = projName ? await resolveProject(projName) : null;
