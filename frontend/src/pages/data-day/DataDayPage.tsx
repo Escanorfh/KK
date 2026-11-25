@@ -248,7 +248,6 @@ export default function DataDayPage() {
                 <th className={thCls}>التاريخ</th>
                 <th className={thCls}>الرقم التسلسلي</th>
                 <th className={thCls}>الكود</th>
-                <th className={thCls}>اسم المعدة</th>
                 <th className={thCls}>المشروع</th>
                 <th className={thCls}>القطاع</th>
                 <th className={cn(thCls, "text-center")}>نهاية</th>
@@ -393,9 +392,6 @@ export default function DataDayPage() {
                     </td>
                     <td className={cn(tdCls, "font-mono text-primary-700 font-semibold")} dir="ltr">
                       {rec.equipment.code}
-                    </td>
-                    <td className={cn(tdCls, "font-semibold whitespace-nowrap")}>
-                      {rec.equipment.name}
                     </td>
                     <td className={cn(tdCls, "text-xs text-slate-500 whitespace-nowrap")}>
                       {rec.projectName || rec.projectCode || "غير محدد"}
