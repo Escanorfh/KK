@@ -325,11 +325,12 @@ export default function OilAlertsPage() {
 
   useEffect(() => {
     projectOptions().then(setProjects).catch((err) => toast.error(getApiError(err)));
+    listSectors().then(setSectors).catch(() => setSectors([]));
   }, []);
 
   useEffect(() => {
     if (projectId === "") {
-      setSectors([]);
+      listSectors().then(setSectors).catch(() => setSectors([]));
       setSectorId("");
       return;
     }
@@ -543,7 +544,6 @@ export default function OilAlertsPage() {
               value={sectorId}
               onChange={(e) => setSectorId(e.target.value === "" ? "" : Number(e.target.value))}
               className={cn(inputCls, "w-full")}
-              disabled={projectId === ""}
             >
               <option value="">كل القطاعات</option>
               {sectors.map((s) => (
