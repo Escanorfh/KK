@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/projects-sync",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/equipment-sync",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

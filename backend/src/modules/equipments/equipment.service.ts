@@ -1134,14 +1134,31 @@ export async function syncFromManagers(userId: number): Promise<ManagersSyncResu
       const existing = await prisma.equipment.findUnique({ where: { code } });
       if (existing) {
         // حماية: إذا كانت هناك عملية نقل معتمدة/مكتملة لهذه المعدة، لا نكتب فوق تخصيصها.
-        const hasProtectedTransfer = await prisma.equipmentTransfer.findFirst({
-          where: { equipmentId: existing.id, status: { in: ["APPROVED", "COMPLETED"] } },
-          select: { id: true },
-        });
         const needsName = name !== existing.name && name !== existing.code;
-        const needsProject = !hasProtectedTransfer && projectId != null && existing.projectId !== projectId;
-        const needsSector = !hasProtectedTransfer && sectorId != null && existing.sectorId !== sectorId;
+        const needsProject = projectId != null && existing.projectId !== projectId;
+        const needsSector = sectorId != null && existing.sectorId !== sectorId;
         const needsCategory = !existing.categoryId && category != null;
+        if (needsProject || needsSector) {
+          const today = new Date();
+          const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+          await prisma.equipmentTransfer.create({
+            data: {
+              equipmentId: existing.id,
+              fromProjectId: existing.projectId,
+              fromSectorId: existing.sectorId,
+              toProjectId: projectId ?? existing.projectId,
+              toSectorId: needsSector ? sectorId : existing.sectorId,
+              transferDate: todayDate,
+              effectiveDate: todayDate,
+              status: "COMPLETED",
+              submittedById: userId,
+              reviewedById: userId,
+              reviewedAt: today,
+              reason: "مزامنة تلقائية من نظام المدرين",
+              notes: "مزامنة تلقائية من نظام المدرين — كود المعدة: " + code,
+            },
+          });
+        }
         if (needsName || needsProject || needsSector || needsCategory) {
           await prisma.equipment.update({
             where: { id: existing.id },
