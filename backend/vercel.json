@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/equipment-sync",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }
