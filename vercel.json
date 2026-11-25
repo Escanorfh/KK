@@ -52,7 +52,7 @@
     },
     {
       "path": "/api/cron/equipment-sync",
-      "schedule": "0 * * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }
