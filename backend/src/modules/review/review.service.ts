@@ -427,7 +427,7 @@ export async function bulkApprove(ids: number[], userId: number) {
       const next = await maintenanceService.nextWorkOrderNo(eqId, tx);
       if (next != null) workOrderMap.set(id, next);
     }
-  });
+  }, { timeout: 55_000, maxWait: 15_000 });
 
   const results: Array<{ id: number; approved: boolean; error?: string; sendError?: string }> = new Array(unique.length);
   let cursor = 0;
