@@ -382,7 +382,10 @@ export default function DataDayPage() {
                 records.map((rec) => (
                   <tr
                     key={rec.id}
-                    className="hover:bg-primary-50/50 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_41px]"
+                    className={cn(
+                      "hover:bg-primary-50/50 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_41px]",
+                      rec.condition === "STOPPED" && "bg-red-500/10 hover:bg-red-500/20"
+                    )}
                   >
                     <td className={cn(tdCls, "font-mono text-xs whitespace-nowrap")} dir="ltr">
                       {formatDate(rec.date)}

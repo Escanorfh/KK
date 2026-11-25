@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
-import { Save, Loader2, Plus, FilePlus2, Copy, Search, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Save, Loader2, Plus, FilePlus2, Copy, Search, AlertTriangle, CheckCircle2, CalendarOff, X } from "lucide-react";
 import { cn, todayLocal, toNumberOrNull, formatDate, CONDITION_LABELS, TRACKING_MODE_LABELS, trackingModeAppliesHours } from "@/lib/utils";
 import { getApiError, getApiFieldErrors } from "@/lib/api";
 import { isQueued } from "@/lib/offline/queue";
@@ -92,6 +92,9 @@ export default function DayPage() {
   const [baselineLoading, setBaselineLoading] = useState(false);
   const [typeOptions, setTypeOptions] = useState<string[]>([]);
   const [lastCondition, setLastCondition] = useState<{ value: NonNullable<DailyLog["condition"]>; date: string } | null>(null);
+  const [stopOpen, setStopOpen] = useState(false);
+  const [stopNote, setStopNote] = useState("");
+  const [stopping, setStopping] = useState(false);
 
   const setField = (key: keyof FormState, value: string | number | null) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -452,6 +455,90 @@ export default function DayPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /**
+   * «اليوم متوقف» — ينسخ بيانات اليوم السابق بالكامل إلى اليوم الحالي
+   * مع تعليم كل المعدات «متوقف» ووضع الملحوظة على كل سجلات اليوم.
+   */
+  const handleStopDay = async () => {
+    const note = stopNote.trim();
+    if (!note) {
+      toast.error("اكتب الملحوظة أولًا");
+      return;
+    }
+    if (pending.length === 0) {
+      toast.error("لا توجد معدات من اليوم السابق لنسخها");
+      return;
+    }
+    setStopping(true);
+    const targets = [...pending];
+    let ok = 0;
+    let queued = 0;
+    let review = 0;
+    const failures: string[] = [];
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < targets.length) {
+        const rec = targets[cursor++];
+        const hasContext = rec.equipment.project?.id != null || rec.equipment.sector?.id != null;
+        try {
+          const res = await saveDailyLog({
+            date,
+            equipmentId: rec.equipmentId,
+            endMeter: rec.endMeter ?? null,
+            operatingHours: rec.operatingHours ?? null,
+            diesel: rec.diesel ?? null,
+            productivityType: rec.productivityType || null,
+            productivityCount: rec.productivityCount ?? null,
+            condition: "STOPPED",
+            notes: note,
+            clientRequestId: crypto.randomUUID(),
+            context: {
+              projectId: rec.equipment.project?.id ?? null,
+              projectCode: rec.equipment.project?.code ?? null,
+              sectorId: rec.equipment.sector?.id ?? null,
+              projectName: rec.equipment.project?.name || null,
+              sectorName: rec.equipment.sector?.name || null,
+              equipmentCode: rec.equipment.code,
+              equipmentName: rec.equipment.name,
+              contextSource: hasContext ? "SNAPSHOT" : "UNKNOWN",
+              capturedAt: new Date().toISOString(),
+              attestation: null,
+            },
+          });
+          if (isQueued(res)) queued++;
+          else if ("pendingReview" in res) review++;
+          else ok++;
+        } catch (err) {
+          failures.push(`${rec.equipment.code}: ${getApiError(err)}`);
+        }
+      }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
+      if (failures.length > 0) {
+        toast.error(
+          `تم نسخ ${ok + queued + review} معدة، وتعذّر ${failures.length}: ${failures[0]}`
+        );
+      } else if (review > 0) {
+        toast(
+          `تم إرسال ${review + ok + queued} سجل إلى مراجعة البيانات — سيُعتمد اليوم كمتوقف بعد موافقة المسؤول`,
+          { icon: "⏳" }
+        );
+      } else {
+        toast.success(
+          `تم تسجيل اليوم كمتوقف — ${ok} معدة${queued ? ` و${queued} بانتظار المزامنة` : ""}`
+        );
+      }
+      setStopOpen(false);
+      setStopNote("");
+      loadRecords();
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const handleCreateEquipment = async () => {
     if (!newEqName.trim()) {
       toast.error("اكتب اسم المعدة");
@@ -537,6 +624,16 @@ export default function DayPage() {
               className="text-sm outline-none"
             />
           </div>
+          <button
+            onClick={() => {
+              setStopNote("");
+              setStopOpen(true);
+            }}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors"
+          >
+            <CalendarOff size={15} />
+            اليوم متوقف
+          </button>
           <button
             onClick={resetForm}
             className="flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors"
@@ -943,6 +1040,74 @@ export default function DayPage() {
           </div>
         </div>
       </div>
+
+      {stopOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !stopping && setStopOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
+                  <CalendarOff size={18} className="text-red-600" />
+                  اليوم متوقف
+                </h3>
+                <p className="text-[13px] text-slate-500 mt-1">
+                  سيتم نسخ بيانات اليوم السابق ({prevDayLabel}) إلى{" "}
+                  <b>{formatDate(date)}</b> وتسجيلها كمتوقفة — {pending.length} معدة.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStopOpen(false)}
+                disabled={stopping}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div>
+              <label className={labelCls} htmlFor="stop-note">
+                الملحوظة
+              </label>
+              <textarea
+                id="stop-note"
+                value={stopNote}
+                onChange={(e) => setStopNote(e.target.value)}
+                rows={3}
+                autoFocus
+                placeholder="مثال: توقف بسبب الأمطار / عطلة رسمية"
+                className={cn(inputCls, "resize-none")}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setStopOpen(false)}
+                disabled={stopping}
+                className="rounded-lg border border-slate-300 text-slate-600 px-4 py-2 text-[13px] font-semibold hover:bg-slate-50 disabled:opacity-60"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleStopDay}
+                disabled={stopping}
+                className="flex items-center gap-2 rounded-lg bg-red-600 hover:bg-red-700 text-white px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+              >
+                {stopping ? <Loader2 size={15} className="animate-spin" /> : <CalendarOff size={15} />}
+                تأكيد توقف اليوم
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
