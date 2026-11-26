@@ -147,6 +147,13 @@ export async function getTrackingReview() {
   return data;
 }
 
+export async function confirmAllTracking() {
+  const { data } = await api.post<{ total: number; classified: number; confirmed: number }>(
+    "/equipments/confirm-tracking"
+  );
+  return data;
+}
+
 export interface MeterReset {
   id: number;
   equipmentId: number;

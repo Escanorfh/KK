@@ -21,6 +21,7 @@ import {
   deleteCategory,
   updateEquipment,
   getTrackingReview,
+  confirmAllTracking,
   type TrackingReview,
   type TrackingReviewRow,
 } from "@/services/equipments";
@@ -50,6 +51,7 @@ export default function TrackingModesPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [categorySaving, setCategorySaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const [newName, setNewName] = useState("");
   const [newPrefixes, setNewPrefixes] = useState("");
@@ -95,6 +97,20 @@ export default function TrackingModesPage() {
       toast.error(getApiError(err));
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const confirmAll = async () => {
+    if (!window.confirm("تأكيد وضع التتبع لكل المعدات غير المؤكدة؟ (يشتق الفئة من بادئة الكود إن وُجدت)")) return;
+    setConfirming(true);
+    try {
+      const r = await confirmAllTracking();
+      toast.success(`تم تأكيد ${r.confirmed} معدة${r.classified ? ` — صنّفت ${r.classified} معدة من بادئة الكود` : ""}`);
+      await load();
+    } catch (err) {
+      toast.error(getApiError(err));
+    } finally {
+      setConfirming(false);
     }
   };
 
@@ -191,6 +207,19 @@ export default function TrackingModesPage() {
             <div className="text-2xl font-extrabold text-red-700">{review.summary.unconfirmed}</div>
             <div className="text-[11px] font-semibold text-red-700">وضع تتبع غير مؤكد</div>
           </div>
+        </div>
+      )}
+
+      {review && review.summary.unconfirmed > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={confirmAll}
+            disabled={confirming}
+            className="rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2 text-sm font-bold flex items-center gap-2"
+          >
+            {confirming ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+            تأكيد الكل تلقائيًا ({review.summary.unconfirmed})
+          </button>
         </div>
       )}
 

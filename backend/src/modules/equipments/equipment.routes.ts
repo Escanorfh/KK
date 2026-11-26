@@ -43,6 +43,11 @@ router.get(
   requireRole("ROOT", "ADMIN"),
   equipmentController.trackingReview
 );
+router.post(
+  "/confirm-tracking",
+  requireRole("ROOT", "ADMIN"),
+  equipmentController.confirmTracking
+);
 router.get("/", validateQuery(listEquipmentQuerySchema), equipmentController.list);
 // الرقم التسلسلي القادم للمشروع — قبل مسارات /:id حتى لا تلتقط كـ id.
 router.get(

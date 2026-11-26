@@ -138,6 +138,14 @@ export async function trackingReview(_req: Request, res: Response, next: NextFun
   }
 }
 
+export async function confirmTracking(_req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await equipmentService.confirmAllTracking(_req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function listAssignments(req: Request, res: Response, next: NextFunction) {
   try {
     res.json(await equipmentService.listAssignments(Number(req.params.id)));

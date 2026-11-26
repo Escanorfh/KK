@@ -964,6 +964,65 @@ export async function trackingReview() {
   };
 }
 
+/**
+ * تأكيد وضع التتبع لكل المعدات غير المؤكدة تلقائيًا (بدلاً من مراجعة 1000 معدة يدويًا).
+ * المعدات بلا فئة أو بفئة «غير مصنف» بتاخد فئة مشتقة من بادئة الكود أولًا.
+ */
+export async function confirmAllTracking(userId: number) {
+  const unconfirmed = await prisma.equipment.findMany({
+    where: { trackingModeConfirmed: false },
+    select: { id: true, code: true, categoryId: true, category: { select: { name: true } } },
+  });
+  if (!unconfirmed.length) return { total: 0, classified: 0, confirmed: 0 };
+
+  const categoriesByPrefix = await categoryByPrefixMap();
+  const byId = new Map<number, { id: number; classified: boolean }>();
+  for (const eq of unconfirmed) {
+    const isUnclassified =
+      eq.categoryId == null || eq.category?.name === UNCLASSIFIED_CATEGORY;
+    byId.set(eq.id, { id: eq.id, classified: !isUnclassified });
+  }
+
+  // تحديث على دفعات صغيرة
+  const ids = unconfirmed.map((e) => e.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const batch = ids.slice(i, i + 200);
+    await prisma.equipment.updateMany({
+      where: { id: { in: batch }, trackingModeConfirmed: false },
+      data: { trackingModeConfirmed: true },
+    });
+  }
+
+  // المعدات غير المصنفة: مشتق الفئة من بادئة الكود إن وُجدت
+  let classified = 0;
+  for (const eq of unconfirmed) {
+    const info = byId.get(eq.id);
+    if (info?.classified) continue;
+    const prefix = codePrefix(eq.code);
+    const category = prefix ? categoriesByPrefix.get(prefix) : undefined;
+    if (!category || category.name === UNCLASSIFIED_CATEGORY) continue;
+    await prisma.equipment.update({
+      where: { id: eq.id },
+      data: {
+        categoryId: category.id,
+        trackingMode: category.defaultTrackingMode,
+        trackingModeOverridden: false,
+        trackingModeConfirmed: true,
+        hasOdometer: category.defaultTrackingMode !== "HOURS",
+      },
+    });
+    classified++;
+  }
+
+  await logAudit(userId, "Equipment", 0, "UPDATE", {
+    action: "CONFIRM_ALL_TRACKING",
+    total: unconfirmed.length,
+    classified,
+  });
+
+  return { total: unconfirmed.length, classified, confirmed: unconfirmed.length };
+}
+
 function pickStr(o: Record<string, unknown>, keys: string[]): string | null {
   for (const k of keys) {
     const v = o[k];
